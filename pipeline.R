@@ -1,4 +1,3 @@
-setwd("~/Workspace/HighRes_RepliSeq")
 library(dplyr)
 library(openssl)
 library(readr)
