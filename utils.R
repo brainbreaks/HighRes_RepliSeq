@@ -1,7 +1,28 @@
-library(dplyr)
-library(reshape2)
-library(readr)
-library(smoother)
+suppressMessages(library(dplyr))
+suppressMessages(library(reshape2))
+suppressMessages(library(readr))
+suppressMessages(library(smoother))
+
+cmd_is_available = function(programs) {
+  missing_programs = c()
+  for(prg in programs) {
+    if (Sys.which(prg) == "") {
+      missing_programs = c(missing_programs, prg)
+    }
+  }
+  if(length(missing_programs)>0) {
+    error_message = paste0("Some executables required to run the pipeline were not found:\n    ", paste(missing_programs, collapse="\n    "))
+    stop(error_message)
+  }
+}
+
+cmd_run = function(cmd) {
+  start_time = Sys.time()
+  writeLines(paste(">", cmd))
+  system(cmd)
+  end_time = Sys.time()
+  writeLines(paste0(round(as.numeric(difftime(end_time, start_time, units="secs"))), "s"))
+}
 
 repliseq_read = function(path) {
   repliseq_df = as.data.frame(t(readr::read_tsv(path, col_names=F))) %>%
