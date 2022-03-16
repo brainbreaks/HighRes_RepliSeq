@@ -11,6 +11,11 @@ source("utils.R")
 
 pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
 {
+  #
+  # Check external executables
+  #
+  cmd_is_available(c("bedtools", "samtools", "bowtie2"))
+
   path_bam = file.path(path_output, "alignments")
   if(!dir.exists(path_bam)) stop(paste0("Path '", path_bam, "' doesn't exist"))
 
