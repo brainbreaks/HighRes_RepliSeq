@@ -16,12 +16,15 @@ cmd_is_available = function(programs) {
   }
 }
 
-cmd_run = function(cmd) {
+cmd_run = function(cmd, intern=F) {
   start_time = Sys.time()
   writeLines(paste(">", cmd))
-  system(cmd)
+  x = system(cmd, intern=intern)
   end_time = Sys.time()
   writeLines(paste0(round(as.numeric(difftime(end_time, start_time, units="secs"))), "s"))
+
+  if(intern) return(x)
+  return(NULL)
 }
 
 repliseq_read = function(path) {
@@ -80,4 +83,36 @@ repliseq_summarize = function(repliseq_df, window=5) {
     dplyr::ungroup()
 
   repliseq_time_df
+}
+
+asda = function() {
+  library(readr)
+  library(ggplot2)
+  library(Biostrings)
+  devtools::load_all('~/Workspace/breaktools/')
+  rdc_df = readr::read_tsv("~/Workspace/Datasets/HTGTS/rdc_pnas_mm10.tsv") %>%
+    tidyr::crossing(rdc_offset=c(-1, 0, 1)) %>%
+    dplyr::mutate(rdc_region_start=rdc_start+(rdc_end-rdc_start)*rdc_offset, rdc_region_end=rdc_end+(rdc_end-rdc_start)*rdc_offset)
+    dplyr::mutate(rdc_region_start=(rdc_region_end+rdc_region_start)/2-5000, rdc_region_end=rdc_region_start+10000)
+  rdc_ranges = rdc_df %>% dplyr::mutate(seqnames=rdc_chrom, start=rdc_region_start, end=rdc_region_end) %>% GenomicRanges::makeGRangesFromDataFrame()
+  rdc_df$seq = get_seq("~/Workspace/genomes/mm10/mm10.fa", rdc_ranges)$sequence
+
+  r1 = ".*(A{12,}(.{0,5})T{12,}).*"
+  r2 = ".*(T{12,}(.{0,5})A{12,}).*"
+  rdc_df$r1_motif = ifelse(grepl(r1, rdc_df$seq,  perl=T, ignore.case=T), gsub(r1, "\\1", rdc_df$seq,  perl=T, ignore.case=T), "")
+  rdc_df$r1_gap = ifelse(nchar(rdc_df$r1_motif)>0, gsub(r1, "\\2", rdc_df$r1_motif,  perl=T, ignore.case=T), NA_character_)
+  rdc_df$r2_motif = ifelse(grepl(r2, rdc_df$seq,  perl=T, ignore.case=T), gsub(r2, "\\1", rdc_df$seq,  perl=T, ignore.case=T), "")
+  rdc_df$r2_gap = ifelse(nchar(rdc_df$r2_motif)>0, gsub(r2, "\\2", rdc_df$r2_motif,  perl=T, ignore.case=T), NA_character_)
+  rdc_df$gap = pmax(nchar(rdc_df$r1_gap), nchar(rdc_df$r2_gap), na.rm=T)
+  rdc_df$polA_count = sapply(gregexpr("(A{2,}(.{0,1})){10}A{2,}", rdc_df$seq), function(x) sum(x>0))
+  rdc_df$polT_count = sapply(gregexpr("(T{2,}(.{0,1})){10}T{2,}", rdc_df$seq), function(x) sum(x>0))
+
+  table(rdc_df$rdc_offset, rdc_df$polA_count>0)
+  table(rdc_df$rdc_offset, rdc_df$polT_count>0)
+  table(rdc_df$rdc_offset, !is.na(rdc_df$r1_gap))
+  table(rdc_df$rdc_offset, !is.na(rdc_df$r2_gap))
+
+  ggplot(rdc_df) +
+    geom_boxplot(aes(x=1, fill=as.factor(rdc_offset), y=gap))
+
 }

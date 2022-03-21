@@ -11,6 +11,17 @@ source("utils.R")
 
 pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
 {
+  # path_metadata = "~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_metadata.tsv"
+  # path_output = "~/Workspace/Datasets/zhao_bmc_repliseq_2020"
+  # binsizes = 50e3
+  # threads = 1
+
+
+  path_metadata = "~/Workspace/Datasets/Repliseq/raw/B400_RS_001_23911/23911_meta.tsv"
+  path_output = "~/Workspace/Datasets/Repliseq"
+  binsizes = 50e3
+  threads = 1
+
   path_bam = file.path(path_output, "alignments")
   if(!dir.exists(path_bam)) stop(paste0("Path '", path_bam, "' doesn't exist"))
 
@@ -37,6 +48,42 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
   if(!dir.exists(file.path(path_output, "bedgraph"))) cmd_run(paste0("mkdir ", file.path(path_output, "bedgraph")))
 
 
+  writeLines("Calculating BAM sizes for normalization...")
+  calc_bamsizes = function(i)
+  {
+    suppressMessages(library(dplyr))
+    source("utils.R")
+    path_bamsize = file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(binned_arguments_df$SAMPLE_BAM[i])))
+    if(!file.exists(path_bamsize)) {
+      cmd_bamsize = stringr::str_glue("samtools view -c {bam} > {size}", bam=binned_arguments_df$SAMPLE_BAM[i], size=path_bamsize)
+      cmd_run(cmd_bamsize)
+
+      df_bamsize = data.frame(SAMPLE_BAM=binned_arguments_df$SAMPLE_BAM[i], SAMPLE_SIZE=as.numeric(readLines(path_bamsize)))
+      readr::write_tsv(df_bamsize, path=path_bamsize)
+    }
+  }
+
+  path_bamsizes = file.path(path_bam, "bamsizes.tsv")
+  if(!file.exists(path_bamsizes))
+  {
+    if(threads > 0) {
+      x = sapply(1:nrow(binned_arguments_df), FUN=calc_bamsizes)
+    } else {
+
+    }
+    bamsize_cols = readr::cols(SAMPLE_BAM=readr::col_character(), SAMPLE_SIZE=readr::col_double())
+    bamsizes_df = binned_arguments_df %>%
+      dplyr::distinct(SAMPLE_NAME, SAMPLE_BAM) %>%
+      dplyr::rowwise() %>%
+      dplyr::do(readr::read_tsv(file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(.$SAMPLE_NAME[i]))), col_types=bamsize_cols)) %>%
+      dplyr::ungroup()
+    readr::write_tsv(bamsizes_df, path=path_bamsizes)
+    file.remove(file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(bamsize_df$SAMPLE_BAM))))
+  } else {
+    bamsizes_df = readr::read_tsv(path_bamsizes)
+  }
+
+
   writeLines("Calculating coverage...")
   binned_arguments_df = arguments_df %>% tidyr::crossing(data.frame(SAMPLE_BINSIZE=binsizes)) %>% data.frame()
   make_bedgraph = function(i) {
@@ -54,7 +101,6 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
     if(!file.exists(path_bedgraph)) {
       cmd_chromizes = stringr::str_glue("samtools idxstats {bam} | cut -f 1-2 | grep -vP '\\t0' > {chromsizes}", bam=binned_arguments_df$SAMPLE_BAM[i], chromsizes=path_chromsizes)
       cmd_run(cmd_chromizes)
-
       cmd_makewindows = stringr::str_glue("bedtools makewindows -w {format(binsize, scientific=F)} -s {format(binsize, scientific=F)} -g {chromsizes} > {tiles}; bedtools sort -faidx {chromsizes} -i {tiles} > {tiles_tmp}; mv {tiles_tmp} {tiles}", chromsizes=path_chromsizes, binsize=binned_arguments_df$SAMPLE_BINSIZE[i], tiles=path_tiles, tiles_tmp=path_tiles_tmp)
       cmd_run(cmd_makewindows)
       cmd_coverage = stringr::str_glue("bedtools intersect -abam {tiles} -b {bam} -c -bed -g {chromsizes} -sorted > {bedgraph}", sample=binned_arguments_df$SAMPLE_NAME[i], chromsizes=path_chromsizes, bam=binned_arguments_df$SAMPLE_BAM[i], tiles=path_tiles, bedgraph=path_bedgraph)
@@ -62,22 +108,20 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
       file.remove(path_tiles)
       file.remove(path_tiles_tmp)
       file.remove(path_chromsizes)
-      # cmd_run(paste("rm", path_tiles))
-      # cmd_run(paste("rm", path_tiles_tmp))
-      # cmd_run(paste("rm", path_chromsizes))
     } else {
       writeLines(paste0("Bedgraph file '", path_bedgraph, "' exists, skipping..."))
     }
   }
 
-  # if(threads == 0) {
-  x = sapply(1:nrow(binned_arguments_df), FUN=make_bedgraph)
-  # } else {
-  #   cl = parallel::makeCluster(threads, outfile="")
-  #   parallel::clusterExport(cl, "binned_arguments_df", envir=environment())
-  #   x = parallel::parSapply(cl , 1:nrow(binned_arguments_df), FUN=make_bedgraph)
-  #   parallel::stopCluster(cl)
-  # }
+
+  if(threads > 0) {
+    x = sapply(1:nrow(binned_arguments_df), FUN=make_bedgraph)
+  } else {
+    cl = parallel::makeCluster(threads, outfile="")
+    parallel::clusterExport(cl, "binned_arguments_df", envir=environment())
+    x = parallel::parSapply(cl , 1:nrow(binned_arguments_df), FUN=make_bedgraph)
+    parallel::stopCluster(cl)
+  }
 
   bedgraph_cols = readr::cols(
     repliseq_chrom=readr::col_character(),
@@ -92,10 +136,12 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
     dplyr::filter(!is.na(SAMPLE_NAME)) %>%
     dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_NAME, SAMPLE_CONDITION, repliseq_fraction) %>%
     dplyr::do(readr::read_tsv(file.path(path_output, stringr::str_glue("bedgraph/{sample}_bin{format(binsize, scientific=F)}.bdg", sample=.$SAMPLE_NAME[1], binsize=.$SAMPLE_BINSIZE[1])), col_names=names(bedgraph_cols$cols), col_types=bedgraph_cols)) %>%
-    dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_NAME) %>%
-    dplyr::mutate(library_size=dplyr::n()) %>%
     dplyr::ungroup() %>%
-    dplyr::mutate(library_factor=min(library_size)/library_size) %>%
+    dplyr::inner_join(bamsizes_df, by="SAMPLE_NAME") %>%
+    dplyr::group_by(SAMPLE_NAME, SAMPLE_CONDITION) %>%
+    dplyr::mutate(SAMPLE_BASELINE=quantile(repliseq_value_abs, 1)) %>%
+    dplyr::group_by(SAMPLE_CONDITION) %>%
+    dplyr::mutate(library_factor=min(SAMPLE_BASELINE)/SAMPLE_BASELINE) %>%
     dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_CONDITION, repliseq_chrom, repliseq_start, repliseq_end) %>%
     dplyr::mutate(repliseq_start=repliseq_start) %>%
     dplyr::mutate(repliseq_value=library_factor*repliseq_value_abs, repliseq_value=repliseq_value/max(repliseq_value)) %>%
@@ -195,7 +241,7 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
   }
 
   if(threads == 1) {
-    x = sapply(1:nrow(bedgraph_smooth_output_df), FUN=make_bedgraph)
+    x = sapply(1:nrow(bedgraph_smooth_output_df), FUN=write_results)
   } else {
     cl = parallel::makeCluster(threads, outfile="")
     parallel::clusterExport(cl, c("bedgraph_smooth_output_df", "bedgraph_smooth_df"), envir=environment())
