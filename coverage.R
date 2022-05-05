@@ -11,16 +11,16 @@ source("utils.R")
 
 pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
 {
-  # path_metadata = "~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_metadata.tsv"
-  # path_output = "~/Workspace/Datasets/zhao_bmc_repliseq_2020"
-  # binsizes = 50e3
-  # threads = 1
-
-
-  path_metadata = "~/Workspace/Datasets/Repliseq/raw/B400_RS_001_23911/23911_meta.tsv"
-  path_output = "~/Workspace/Datasets/Repliseq"
+  path_metadata = "~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_metadata.tsv"
+  path_output = "~/Workspace/Datasets/zhao_bmc_repliseq_2020"
   binsizes = 50e3
   threads = 1
+
+
+  # path_metadata = "~/Workspace/Datasets/Repliseq/raw/B400_RS_001_23911/23911_meta.tsv"
+  # path_output = "~/Workspace/Datasets/Repliseq"
+  # binsizes = 50e3
+  # threads = 1
 
   #
   # Check external executables
@@ -142,7 +142,7 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
     dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_NAME, SAMPLE_CONDITION, repliseq_fraction) %>%
     dplyr::do(readr::read_tsv(file.path(path_output, stringr::str_glue("bedgraph/{sample}_bin{format(binsize, scientific=F)}.bdg", sample=.$SAMPLE_NAME[1], binsize=.$SAMPLE_BINSIZE[1])), col_names=names(bedgraph_cols$cols), col_types=bedgraph_cols)) %>%
     dplyr::ungroup() %>%
-    dplyr::inner_join(bamsizes_df, by="SAMPLE_NAME") %>%
+    # dplyr::inner_join(bamsizes_df, by="SAMPLE_NAME") %>%
     dplyr::group_by(SAMPLE_NAME, SAMPLE_CONDITION) %>%
     dplyr::mutate(SAMPLE_BASELINE=quantile(repliseq_value_abs, 1)) %>%
     dplyr::group_by(SAMPLE_CONDITION) %>%
@@ -191,7 +191,7 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
     z = bedgraph_smooth_df %>%
       dplyr::inner_join(bedgraph_smooth_output_df[i,,drop=F], by=c("SAMPLE_CONDITION", "SAMPLE_BINSIZE")) %>%
       dplyr::arrange(repliseq_chrom, repliseq_start, repliseq_end, dplyr::desc(repliseq_fraction))
-    writeLines(paste0("\n==========================================\n", i, "/", nrow(bedgraph_smooth_output_df), ": ", z$SAMPLE_NAME[1], " / bin", z$SAMPLE_BINSIZE[1], "\n=========================================="))
+    writeLines(paste0("\n==========================================\n", i, "/", nrow(bedgraph_smooth_output_df), ": ", z$SAMPLE_CONDITION[1], " / bin", z$SAMPLE_BINSIZE[1], "\n=========================================="))
 
     # z = bedgraph_smooth_df %>% dplyr::filter(SAMPLE_CONDITION=="DMSO")
     z_path_igv = file.path(path_output, stringr::str_glue("results/{cond}_repliseq{format(binsize, scientific=F)}.igv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))

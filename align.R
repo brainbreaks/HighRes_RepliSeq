@@ -80,7 +80,7 @@ pipeline_align = function(path_metadata, path_fastq, path_database, path_output,
   #
   writeLines("Aligning sequenced reads with reference...")
   for(i in 1:nrow(arguments_df)) {
-    print(paste0(i, "/", nrow(arguments_df), ": ", arguments_df$SAMPLE_NAME[i]))
+    writeLines(paste0(i, "/", nrow(arguments_df), ": ", arguments_df$SAMPLE_NAME[i]))
 
     path_bam = file.path(path_output, stringr::str_glue("alignments/{sample}.bam", sample=arguments_df$SAMPLE_NAME[i]))
     path_bai = paste0(path_bam, ".bai")
