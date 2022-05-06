@@ -1,12 +1,19 @@
+#Sys.setenv(PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/Library/TeX/texbin:/usr/local/go/bin:/Library/Apple/usr/bin:/Applications/RStudio.app/Contents/MacOS/postback:/opt/homebrew/bin")
+
 #!/usr/bin/env Rscript
 
 suppressMessages(library(dplyr))
 suppressMessages(library(readr))
 source("utils.R")
 
-pipeline_align = function(path_metadata, path_fastq, path_database, path_output, threads=1, md5_suffix=NULL)
+
+
+pipeline_align(path_metadata = "/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002/metadata_run.tsv", path_fastq="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002/AS-787602-LR-62010/fastq/", path_database = "~/Workspace/Datasets/genomes/mm10/mm10", path_output="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002", threads=1, md5_suffix=NULL)
+
+pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_quality=22, trim_minlength=40, path_database, path_output, threads=1, md5_suffix=NULL)
 {
   if(!dir.exists(file.path(path_output, "alignments"))) cmd_run(paste0("mkdir ", file.path(path_output, "alignments")))
+    if(!dir.exists(file.path(path_output, "trim"))) cmd_run(paste0("mkdir ", file.path(path_output, "trim")))
 
   files_df = data.frame(FASTQ_PATH=list.files(path_fastq, recursive=T, full.names=T)) %>% dplyr::mutate(FASTQ_FILE=basename(FASTQ_PATH))
   meta_df = readr::read_tsv(path_metadata) %>%
@@ -15,12 +22,18 @@ pipeline_align = function(path_metadata, path_fastq, path_database, path_output,
   #
   # Check external executables
   #
-  cmd_is_available(c("bedtools", "samtools", "bowtie2"))
+  cmd_is_available(c("bedtools", "samtools", "bowtie2", "picard", "trim_galore"))
+
 
   #
   # Check for errors in arguments
   #
   error_message = ""
+
+  path_database = file.path(tools::file_path_as_absolute(dirname(path_database)), basename(path_database))
+  if (!file.exists(paste0(path_database, ".1.bt2"))){
+      error_message = paste0("Bowtie index does not exist '", path_database)}
+
   if(!is.null(md5_suffix)) {
     suppressMessages(library(openssl))
     files_df = files_df %>%
@@ -79,28 +92,34 @@ pipeline_align = function(path_metadata, path_fastq, path_database, path_output,
   # Run pipeline
   #
   writeLines("Aligning sequenced reads with reference...")
+  i=1
   for(i in 1:nrow(arguments_df)) {
     writeLines(paste0(i, "/", nrow(arguments_df), ": ", arguments_df$SAMPLE_NAME[i]))
 
-    path_bam = file.path(path_output, stringr::str_glue("alignments/{sample}.bam", sample=arguments_df$SAMPLE_NAME[i]))
-    path_bai = paste0(path_bam, ".bai")
-    path_tmpbam = file.path(path_output, stringr::str_glue("alignments/{sample}_tmp.bam", sample=arguments_df$SAMPLE_NAME[i]))
+    path_trim = tools::file_path_as_absolute(file.path(path_output, stringr::str_glue("trim/'{sample}'.bam", sample=arguments_df$SAMPLE_NAME[i])))
+    path_bam = tools::file_path_as_absolute(file.path(path_output, stringr::str_glue("alignments/{sample}.bam", sample=arguments_df$SAMPLE_NAME[i])))
+    path_bai = tools::file_path_as_absolute(paste0(path_bam, ".bai"))
+    path_tmpbam = tools::file_path_as_absolute(file.path(path_output, stringr::str_glue("alignments/{sample}_tmp.bam", sample=arguments_df$SAMPLE_NAME[i])))
+    path_tmpsam = tools::file_path_as_absolute(file.path(path_output, stringr::str_glue("alignments/{sample}_tmp.sam", sample=arguments_df$SAMPLE_NAME[i])))
 
     if(!file.exists(path_bam)) {
-      cmd_bowtie = stringr::str_glue("bowtie2 -q -p {threads} --phred33 --end-to-end --sensitive --no-mixed --no-discordant --reorder --no-unal -x {db} -1  {r1} -2  {r2} | samtools view -b -@ {threads} - > {bam}", bam=path_bam, db=path_database, r1=arguments_df$`1`[i], r2=arguments_df$`2`[i], sample=arguments_df$SAMPLE_NAME[i], threads=threads)
+      cmd_trim = stringr::str_glue("trim_galore --paired --length={trim_minlength} --gzip -q {trim_quality} -o {path_trim} -j {threads} {input1} {input2}", trim_minlength=trim_minlength, input1=arguments_df$`1`[i], input2=arguments_df$`2`[i], trim_quality=trim_quality, threads=threads)
+      cmd_run(cmd_trim)
+
+      cmd_trim = stringr::str_glue("trim_galore --paired --length={trim_minlength} --gzip -q {trim_quality} -o {path_trim} -j {threads} {input1} {input2}", trim_minlength=trim_minlength, input1=arguments_df$`1`[i], input2=arguments_df$`2`[i], trim_quality=trim_quality, threads=threads)
+
+      cmd_bowtie = stringr::str_glue("bowtie2 -q -p {threads} --phred33 --end-to-end --sensitive --no-mixed --no-discordant --reorder --no-unal -x '{db}' -1  '{r1}' -2  '{r2}' -S '{sam}'", bam=path_bam, sam=path_tmpsam, db=path_database, r1=arguments_df$`1`[i], r2=arguments_df$`2`[i], sample=arguments_df$SAMPLE_NAME[i], threads=threads)
       cmd_run(cmd_bowtie)
 
-      cmd_mapq = stringr::str_glue("samtools view -bSq 20 -@ {threads} {bam} > {tmp}; mv {tmp} {bam}", tmp=path_tmpbam, bam=path_bam, threads=threads)
+      cmd_mapq = stringr::str_glue("samtools view -bSq {alignment_mapq} -@ '{threads}' '{sam}' > {bam}", alignment_mapq=alignment_mapq, sam=path_tmpsam, bam=path_bam, threads=threads)
       cmd_run(cmd_mapq)
 
-      cmd_fixmate = stringr::str_glue("samtools fixmate -@ {threads} -m {bam} {tmp}; mv {tmp} {bam}", tmp=path_tmpbam, bam=path_bam, threads=threads)
-      cmd_run(cmd_fixmate)
+      file.remove(path_tmpsam)
 
-      cmd_sort = stringr::str_glue("samtools sort -@ {threads} -o {tmp} {bam}; mv {tmp} {bam}", tmp=path_tmpbam, bam=path_bam, threads=threads)
-      cmd_run(cmd_sort)
+      cmd_markduplicates = stringr::str_glue("picard-tools MarkDuplicates INPUT={bam} OUTPUT={tmpbam} REMOVE_DUPLICATES=true ASSUME_SORT_ORDER=coordinate, mv {tmpbam} {bam}", tmpbam=path_tmpbam, bam=path_bam)
+      cmd_run(cmd_markduplicates)
 
-      cmd_unique = stringr::str_glue("samtools markdup -@ {threads} -r {bam} {tmp}; mv {tmp} {bam}", tmp=path_tmpbam, bam=path_bam, threads=threads)
-      cmd_run(cmd_unique)
+
     } else {
       writeLines(paste0("BAM file '", path_bam, "' exists, skipping..."))
     }
