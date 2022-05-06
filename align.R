@@ -8,7 +8,7 @@ source("utils.R")
 
 
 
-pipeline_align(path_metadata = "/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002/metadata_run.tsv", path_fastq="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002/AS-787602-LR-62010/fastq/", path_database = "~/Workspace/Datasets/genomes/mm10/mm10", path_output="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002", threads=1, md5_suffix=NULL)
+#pipeline_align(path_metadata = "/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002/metadata_run.tsv", path_fastq="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002/AS-787602-LR-62010/fastq/", path_database = "~/Workspace/Datasets/genomes/mm10/mm10", path_output="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002", threads=1, md5_suffix=NULL)
 
 pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_quality=22, trim_minlength=40, path_database, path_output, threads=1, md5_suffix=NULL)
 {
@@ -92,7 +92,6 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
   # Run pipeline
   #
   writeLines("Aligning sequenced reads with reference...")
-  i=1
   for(i in 1:nrow(arguments_df)) {
     writeLines(paste0(i, "/", nrow(arguments_df), ": ", arguments_df$SAMPLE_NAME[i]))
 
