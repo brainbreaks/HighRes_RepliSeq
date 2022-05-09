@@ -1,19 +1,11 @@
-#Sys.setenv(PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/Library/TeX/texbin:/usr/local/go/bin:/Library/Apple/usr/bin:/Applications/RStudio.app/Contents/MacOS/postback:/opt/homebrew/bin")
 #!/usr/bin/env Rscript
+
 suppressMessages(library(dplyr))
 suppressMessages(library(readr))
 source("utils.R")
+
 pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_quality=22, trim_minlength=40, path_database, path_output, threads=1, SAMPLE_NUMBER)
 {
-  # path_metadata="~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_metadata1.tsv"
-  # path_fastq="~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_raw"
-  # alignment_mapq=40
-  # trim_quality=22
-  # trim_minlength=40
-  # path_database="~/Workspace/genomes/mm10/mm10"
-  # path_output="alignments1"
-  # threads=30
-
   path_output = R.utils::getAbsolutePath(path_output)
   if(!dir.exists(path_output)) cmd_run(paste0("mkdir ", path_output))
   if(!dir.exists(file.path(path_output, "alignments"))) cmd_run(paste0("mkdir ", file.path(path_output, "alignments")))
@@ -127,26 +119,23 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
     }
   }
 }
-# pipeline_align(path_metadata = "/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002/metadata_run.tsv", %>%
-#                    path_fastq="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002/AS-787602-LR-62010/fastq/", %>%
-#                    path_database = "~/Workspace/Datasets/genomes/mm10/mm10", %>%
-#                    path_output="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002", threads=1)
+
 pipeline_align_cli = function()
 {
-    option_list = list(
+  option_list = list(
     optparse::make_option(c("-m", "--metadata"), dest="metadata", type="character", default=NULL, help="File with metadata", metavar="character"),
     optparse::make_option(c("-g", "--genome-dir"), dest="genome_dir", type="character", default=NULL, help="Path to genome {align}", metavar="character"),
     optparse::make_option(c("-o", "--output-dir"), dest="out", type="character", default=".", help="Output directory [default= %default]", metavar="character"),
-    optparse::make_option("--binsizes", type="character", default="50000", help="Comma separated bin size [default= %default]", metavar="character"),
-    optparse::make_option("--fastq-dir", dest="fastq", type="character", default=".", help="Path to folder with fastq files [default= %default]", metavar="character"),
+    optparse::make_option(c("-i", "--fastq-dir"), dest="fastq", type="character", default=".", help="Path to folder with fastq files [default= %default]", metavar="character"),
     optparse::make_option(c("-t", "--threads"), type="integer", default=1, help="Output directory [default= %default]", metavar="integer"),
     optparse::make_option('--trim-minlength', dest="trim_minlength", type="integer", default=40, help="Minimal length of the trimmed fasta sequence"),
     optparse::make_option('--alignment-mapq', dest="alignment_mapq", type="integer", default = 40, help= "MAPQ Score of Alignment"),
     optparse::make_option('--trim-quality', dest= "trim_quality", type="integer", default=22, help="Minimal quality of trimmed sequence"),
-    optparse::make_option("--sample-number", dest = "SAMPLE_NUMBER", type = "integer", default = -1)
+    optparse::make_option("--sample-number", dest = "SAMPLE_NUMBER", type = "integer", default=-1, help="Align a single sample from metadata table(number #SAMPLE_NUMBER)")
   )
   opt_parser = optparse::OptionParser(option_list=option_list, usage="./coverage.R [options]", description = "Align short reads from FASTQ files to reference genome")
   opt = optparse::parse_args(opt_parser)
+
   #
   # Parse CLI arguments
   #
@@ -159,17 +148,7 @@ pipeline_align_cli = function()
   alignment_mapq = opt$alignment_mapq
   trim_quality = opt$trim_quality
   SAMPLE_NUMBER = opt$SAMPLE_NUMBER
-  # threads = 32
-  # path_database = "~/Workspace/genomes/mm10/mm10"
-  # path_output = "~/Workspace/repliseq/zhao"
-  # path_fastq = "~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_raw"
-  # path_metadata = "~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_metadata.tsv"
-  # path_output = "~/Workspace/Datasets/Repliseq"
-  # path_fastq = "~/Workspace/Datasets/Repliseq/raw/B400_RS_001_23911"
-  # path_metadata = "~/Workspace/Datasets/Repliseq/raw/B400_RS_001_23911/23911_meta.tsv"
-  # path_output = "~/Workspace/HighRes_RepliSeq/test_repliseq"
-  # path_fastq = "~/Workspace/Datasets/Repliseq/raw/B400_RS_001_23911"
-  # path_metadata = "~/Workspace/Datasets/Repliseq/raw/B400_RS_001_23911/23911_meta.tsv"
+
   #
   # Print arguments
   #
