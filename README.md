@@ -87,7 +87,7 @@ docker run -v ${PWD}:/mount -u $(id -g ${USER}):$(id -g ${USER}) -it --entrypoin
 ----------------------------------------------------
 To build Docker image you need to execute
 ```console
-docker build --squash --build-arg http_proxy="http://www-int2.inet.dkfz-heidelberg.de:80" --build-arg https_proxy="http://www-int2.inet.dkfz-heidelberg.de:80" --rm -t sandrejev/repliseq:latest .
+docker build --squash --build-arg http_proxy="http://www-int2.inet.dkfz-heidelberg.de:80" --build-arg https_proxy="http://www-int2.inet.dkfz-heidelberg.de:80" --progress=plain --rm -t sandrejev/repliseq:latest .
 ```
 
 <a name="build-push">Push docker image to Docker HUB</a>

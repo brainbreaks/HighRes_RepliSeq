@@ -12,12 +12,13 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
   if(!dir.exists(file.path(path_output, "trim"))) cmd_run(paste0("mkdir ", file.path(path_output, "trim")))
 
   files_df = data.frame(FASTQ_PATH=list.files(path_fastq, recursive=T, full.names=T)) %>% dplyr::mutate(FASTQ_FILE=basename(FASTQ_PATH))
-  meta_df = readr::read_tsv(path_metadata) %>%
+  meta_df = readr::read_tsv(path_metadata, show_col_types=F) %>%
     dplyr::mutate(SAMPLE_NUMBER=match(SAMPLE_NAME, unique(SAMPLE_NAME)))
   #
   # Check external executables
   #
-  cmd_is_available(c("bedtools", "samtools", "bowtie2", "picard", "trim_galore"))
+  cmd_is_available(c("bedtools", "samtools", "bowtie2", "picard-tools", "trim_galore"))
+
   #
   # Check for errors in arguments
   #
@@ -26,6 +27,9 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
   if (!file.exists(paste0(path_database, ".1.bt2"))){
       error_message = paste0("Bowtie index does not exist '", path_database)}
 
+  #
+  # Check duplicate sample names
+  #
   duplicate_sample = meta_df %>%
     dplyr::group_by(SAMPLE_NAME) %>%
     dplyr::filter(length(unique(SAMPLE_CONDITION, SAMPLE_FRACTION))>1) %>%
@@ -35,6 +39,10 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
     error_dupsample = paste0("Duplicate sample names in '", path_metadata, "':\n    ", paste(duplicate_sample, collapse="\n    "))
     error_message = paste0(error_message, error_dupsample, "\n-------------------------------\n")
   }
+
+  #
+  # Check duplicate fastq files
+  #
   duplicate_fastq = meta_df %>%
     dplyr::group_by(FASTQ_FILE) %>%
     dplyr::filter(dplyr::n()>1) %>%
@@ -44,6 +52,11 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
     error_dupfile = paste0("Duplicate fasta files in '", path_fastq, "':\n    ", paste(duplicate_fastq, collapse="\n    "))
     error_message = paste0(error_message, error_dupfile, "\n-------------------------------\n")
   }
+
+
+  #
+  # Check duplicate fastq files
+  #
   arguments1_df = meta_df %>%
       dplyr::left_join(files_df, by="FASTQ_FILE") %>%
       dplyr::rowwise() %>%
@@ -57,23 +70,34 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
     error_missing = paste0("Missing fasta files in '", path_fastq, "':\n    ", paste(missing_fasta$path, collapse="\n    "))
     error_message = paste0(error_message, error_missing, "\n-------------------------------\n")
   }
+
+  #
+  # Print validation errors
+  #
   if(nchar(error_message)>0) {
     stop(error_message)
   }
+
+  #
+  # Create data.frame with coupled paired reads in each row
+  #
   arguments_trim_df = arguments1_df %>%
     dplyr::mutate(TRIM_FASTQ_PAIR=paste0("trim_", FASTQ_PAIR)) %>% reshape2::dcast(SAMPLE_NAME~TRIM_FASTQ_PAIR, value.var="TRIM_FASTQ_PATH")
   arguments_df = arguments1_df %>%
     reshape2::dcast(SAMPLE_NAME+SAMPLE_NUMBER+SAMPLE_CONDITION+SAMPLE_FRACTION~FASTQ_PAIR, value.var="FASTQ_PATH") %>%
     dplyr::inner_join(arguments_trim_df, by="SAMPLE_NAME") %>%
     dplyr::arrange(SAMPLE_NUMBER)
+
   #
   # Run pipeline
   #
   writeLines("Aligning sequenced reads with reference...")
-
-
   for(i in 1:nrow(arguments_df)) {
-    if(SAMPLE_NUMBER != -1 && i != SAMPLE_NUMBER){next}
+    if(SAMPLE_NUMBER != -1 && i != SAMPLE_NUMBER) { next }
+
+    #
+    # Prepare file paths
+    #
     writeLines(paste0(i, "/", nrow(arguments_df), ": ", arguments_df$SAMPLE_NAME[i]))
     path_trim = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("trim", sample=arguments_df$SAMPLE_NAME[i])))
     path_bam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}.bam", sample=arguments_df$SAMPLE_NAME[i])))
@@ -81,6 +105,7 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
     path_tmpbam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_tmp.bam", sample=arguments_df$SAMPLE_NAME[i])))
     path_tmpsam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_tmp.sam", sample=arguments_df$SAMPLE_NAME[i])))
     path_markdup_report = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_markdup.txt", sample=arguments_df$SAMPLE_NAME[i])))
+
     if(!file.exists(path_bam)) {
       # Trim
       cmd_trim = stringr::str_glue("trim_galore --paired --length={trim_minlength} --gzip -q {trim_quality} -o '{path_trim}' -j {threads} '{input1}' '{input2}'", path_trim=path_trim, trim_minlength=trim_minlength, input1=arguments_df$`1`[i], input2=arguments_df$`2`[i], trim_quality=trim_quality, threads=threads)
