@@ -54,17 +54,19 @@ RUN wget https://github.com/samtools/samtools/releases/download/1.15/samtools-1.
 
 # Copy dependencies into docker image
 COPY coverage.R $DESTINATION/coverage.R
+COPY checksum.R $DESTINATION/checksum.R
 COPY align.R $DESTINATION/align.R
 COPY utils.R $DESTINATION/utils.R
 
 RUN ln -s $DESTINATION/coverage.R $DESTINATION/coverage && \
     ln -s $DESTINATION/align.R $DESTINATION/align && \
+    ln -s $DESTINATION/checksum.R $DESTINATION/checksum && \
     ln -s $DESTINATION/utils.R /bin/ln_utils.R
 
 RUN sed -i 's/utils.R/\/bin\/ln_utils.R/g' $DESTINATION/align.R && \
-    sed -i 's/utils.R/\/bin\/ln_utils.R/g' $DESTINATION/coverage.R
+    sed -i 's/utils.R/\/bin\/ln_utils.R/g' $DESTINATION/coverage.R && \
+    sed -i 's/utils.R/\/bin\/ln_utils.R/g' $DESTINATION/checksum.R
 
-# Install bigWigToWig and wigToBigWig from bigWig
-RUN chmod 755 $DESTINATION/coverage $DESTINATION/align
+RUN chmod 755 $DESTINATION/coverage $DESTINATION/align $DESTINATION/checksum
 
 WORKDIR /mount
