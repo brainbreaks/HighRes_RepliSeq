@@ -3,7 +3,7 @@
 suppressMessages(library(dplyr))
 suppressMessages(library(readr))
 source("utils.R")
-pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_quality=22, trim_minlength=40, path_database, path_output, threads=1, md5_suffix=NULL)
+pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_quality=22, trim_minlength=40, path_database, path_output, threads=1, SAMPLE_NUMBER)
 {
   # path_metadata="~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_metadata1.tsv"
   # path_fastq="~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_raw"
@@ -13,7 +13,6 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
   # path_database="~/Workspace/genomes/mm10/mm10"
   # path_output="alignments1"
   # threads=30
-  # md5_suffix=NULL
 
   path_output = R.utils::getAbsolutePath(path_output)
   if(!dir.exists(path_output)) cmd_run(paste0("mkdir ", path_output))
@@ -34,19 +33,7 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
   path_database = file.path(R.utils::getAbsolutePath(dirname(path_database)), basename(path_database))
   if (!file.exists(paste0(path_database, ".1.bt2"))){
       error_message = paste0("Bowtie index does not exist '", path_database)}
-  if(!is.null(md5_suffix)) {
-    suppressMessages(library(openssl))
-    files_df = files_df %>%
-      dplyr::rowwise() %>%
-      dplyr::mutate(md5=as.character(openssl::md5(file(FASTQ_PATH, open = "rb"))))
-    files_df = files_df %>%
-      dplyr::rowwise() %>%
-      dplyr::mutate(md5=as.character(md5)) %>%
-      dplyr::mutate(md5_expected=gsub(" .*", "", readr::read_tsv(paste0(FASTQ_PATH, md5_suffix), col_names=F)[[1]])) %>%
-      dplyr::ungroup()
-    error_md5 = paste0("HASH doesn't match for: ", paste(basename(files_df %>% dplyr::filter(md5!=md5_expected) %>% .$FASTQ_FILE), collapse=", "))
-    error_message = paste0(error_message, error_md5, "\n-------------------------------\n")
-  }
+
   duplicate_sample = meta_df %>%
     dplyr::group_by(SAMPLE_NAME) %>%
     dplyr::filter(length(unique(SAMPLE_CONDITION, SAMPLE_FRACTION))>1) %>%
@@ -85,13 +72,16 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
     dplyr::mutate(TRIM_FASTQ_PAIR=paste0("trim_", FASTQ_PAIR)) %>% reshape2::dcast(SAMPLE_NAME~TRIM_FASTQ_PAIR, value.var="TRIM_FASTQ_PATH")
   arguments_df = arguments1_df %>%
     reshape2::dcast(SAMPLE_NAME+SAMPLE_NUMBER+SAMPLE_CONDITION+SAMPLE_FRACTION~FASTQ_PAIR, value.var="FASTQ_PATH") %>%
-    dplyr::inner_join(arguments_trim_df, by="SAMPLE_NAME")
+    dplyr::inner_join(arguments_trim_df, by="SAMPLE_NAME") %>%
     dplyr::arrange(SAMPLE_NUMBER)
   #
   # Run pipeline
   #
   writeLines("Aligning sequenced reads with reference...")
+
+
   for(i in 1:nrow(arguments_df)) {
+    if(SAMPLE_NUMBER != -1 && i != SAMPLE_NUMBER){next}
     writeLines(paste0(i, "/", nrow(arguments_df), ": ", arguments_df$SAMPLE_NAME[i]))
     path_trim = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("trim", sample=arguments_df$SAMPLE_NAME[i])))
     path_bam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}.bam", sample=arguments_df$SAMPLE_NAME[i])))
@@ -140,21 +130,20 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
 # pipeline_align(path_metadata = "/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002/metadata_run.tsv", %>%
 #                    path_fastq="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002/AS-787602-LR-62010/fastq/", %>%
 #                    path_database = "~/Workspace/Datasets/genomes/mm10/mm10", %>%
-#                    path_output="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002", threads=1, md5_suffix=NULL)
+#                    path_output="/Users/aminaabdelbaki/Workspace/Everything/B400_RS_002", threads=1)
 pipeline_align_cli = function()
 {
-    Rscript align.R -m metadata.tsv -g /path/to/mm10
     option_list = list(
     optparse::make_option(c("-m", "--metadata"), dest="metadata", type="character", default=NULL, help="File with metadata", metavar="character"),
     optparse::make_option(c("-g", "--genome-dir"), dest="genome_dir", type="character", default=NULL, help="Path to genome {align}", metavar="character"),
     optparse::make_option(c("-o", "--output-dir"), dest="out", type="character", default=".", help="Output directory [default= %default]", metavar="character"),
     optparse::make_option("--binsizes", type="character", default="50000", help="Comma separated bin size [default= %default]", metavar="character"),
     optparse::make_option("--fastq-dir", dest="fastq", type="character", default=".", help="Path to folder with fastq files [default= %default]", metavar="character"),
-    optparse::make_option("--md5-suffix", dest="md5", type="character", default=NULL, help="MD5 files suffix. Leave out this argument for not validating fastq files", metavar="character"),
-    optparse::make_option(c("-t", "--threads"), type="integer", default=1, help="Output directory [default= %default]", metavar="integer")
-    optparse::make_option('--trim-minlength', dest="trim_minlength", type="integer", default=40, help="Minimal length of the trimmed fasta sequence")
-    optparse::make_option('--alignment-mapq', dest="alignment_mapq", type="integer", default = 40, help= "MAPQ Score of Alignment")
-    optparse::make_option('--trim-quality', dest= "trim_quality", type="integer", default=22, help="Minimal quality of trimmed sequence")
+    optparse::make_option(c("-t", "--threads"), type="integer", default=1, help="Output directory [default= %default]", metavar="integer"),
+    optparse::make_option('--trim-minlength', dest="trim_minlength", type="integer", default=40, help="Minimal length of the trimmed fasta sequence"),
+    optparse::make_option('--alignment-mapq', dest="alignment_mapq", type="integer", default = 40, help= "MAPQ Score of Alignment"),
+    optparse::make_option('--trim-quality', dest= "trim_quality", type="integer", default=22, help="Minimal quality of trimmed sequence"),
+    optparse::make_option("--sample-number", dest = "SAMPLE_NUMBER", type = "integer", default = -1)
   )
   opt_parser = optparse::OptionParser(option_list=option_list, usage="./coverage.R [options]", description = "Align short reads from FASTQ files to reference genome")
   opt = optparse::parse_args(opt_parser)
@@ -166,13 +155,12 @@ pipeline_align_cli = function()
   path_output = opt$out
   path_fastq = opt$fastq
   threads = opt$threads
-  md5_suffix = opt$md5
   trim_minlength = opt$trim_minlength
   alignment_mapq = opt$alignment_mapq
   trim_quality = opt$trim_quality
+  SAMPLE_NUMBER = opt$SAMPLE_NUMBER
   # threads = 32
   # path_database = "~/Workspace/genomes/mm10/mm10"
-  # md5_suffix = NULL
   # path_output = "~/Workspace/repliseq/zhao"
   # path_fastq = "~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_raw"
   # path_metadata = "~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_metadata.tsv"
@@ -193,18 +181,12 @@ pipeline_align_cli = function()
   writeLines(paste0("trim min length=", trim_minlength))
   writeLines(paste0("MAPQ score of alignment=", alignment_mapq))
   writeLines(paste0("Trim quality=", trim_quality))
-  writeLines(paste0("md5-suffix=", paste(md5_suffix, collapse=",")))
   #
   # Create missing folders
   #
-  pipeline_align(path_metadata=path_metadata, trim_quality=trim_quality, alignment_mapq=alignment_mapq, trim_minlength=trim_minlength, path_fastq=path_fastq, path_database=path_database, path_output=path_output, threads=threads, md5_suffix=md5_suffix)
+  pipeline_align(path_metadata=path_metadata, SAMPLE_NUMBER = SAMPLE_NUMBER, trim_quality=trim_quality, alignment_mapq=alignment_mapq, trim_minlength=trim_minlength, path_fastq=path_fastq, path_database=path_database, path_output=path_output, threads=threads)
 }
 pipeline_align_cli()
-
-
-Message Amina Abdelbaki
-
-
 
 
 
