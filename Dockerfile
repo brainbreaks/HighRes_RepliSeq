@@ -23,7 +23,7 @@ RUN http_proxy="${http_proxy}" https_proxy="${https_proxy}" apt-get install \
     locale-gen en_US.UTF-8 && \
     dpkg-reconfigure locales
 RUN ln -s /usr/bin/python2 /usr/bin/python
-RUN http_proxy="${http_proxy}" https_proxy="${https_proxy}" install2.r --error --deps TRUE optparse dplyr reshape2 readr ggplot2 smoother stringr tidyr spatstat parallel openssl
+RUN http_proxy="${http_proxy}" https_proxy="${https_proxy}" install2.r --error --deps TRUE optparse dplyr reshape2 readr ggplot2 smoother stringr tidyr spatstat openssl
 
 ENV LANG=en_US.UTF-8
 ENV LC_ADDRESS=en_US.UTF-8
