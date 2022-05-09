@@ -100,17 +100,30 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
     path_tmpsam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_tmp.sam", sample=arguments_df$SAMPLE_NAME[i])))
     path_markdup_report = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_markdup.txt", sample=arguments_df$SAMPLE_NAME[i])))
     if(!file.exists(path_bam)) {
+      # Trim
       cmd_trim = stringr::str_glue("trim_galore --paired --length={trim_minlength} --gzip -q {trim_quality} -o '{path_trim}' -j {threads} '{input1}' '{input2}'", path_trim=path_trim, trim_minlength=trim_minlength, input1=arguments_df$`1`[i], input2=arguments_df$`2`[i], trim_quality=trim_quality, threads=threads)
       cmd_run(cmd_trim)
+
+      # Bowtie2
       cmd_bowtie = stringr::str_glue("bowtie2 -q -p {threads} --phred33 --end-to-end --sensitive --no-mixed --no-discordant --no-unal -x '{db}' -1  '{r1}' -2  '{r2}' -S '{sam}'", bam=path_bam, sam=path_tmpsam, db=path_database, r1=arguments_df$`trim_1`[i], r2=arguments_df$`trim_2`[i], sample=arguments_df$SAMPLE_NAME[i], threads=threads)
       cmd_run(cmd_bowtie)
+
+      # Convert to BAM
       cmd_mapq = stringr::str_glue("samtools view -bSq {alignment_mapq} -@ {threads} -o '{bam}' '{sam}'", alignment_mapq=alignment_mapq, sam=path_tmpsam, bam=path_bam, threads=threads)
       cmd_run(cmd_mapq)
       file.remove(path_tmpsam)
 
+      # Sort
+      cmd_sort = stringr::str_glue("samtools sort -@ {threads} -o '{tmp}' '{bam}'", bam=path_bam, tmp=path_tmpbam, threads=threads)
+      cmd_run(cmd_sort)
+      cmd_movesort = stringr::str_glue("mv '{tmpbam}' '{bam}'", tmpbam=path_tmpbam, bam=path_bam)
+      cmd_run(cmd_movesort)
+
+      # mark duplicates
       cmd_markduplicates = stringr::str_glue("picard-tools MarkDuplicates INPUT='{bam}' METRICS_FILE='{path_markdup_report}' OUTPUT='{tmpbam}' REMOVE_DUPLICATES=true ASSUME_SORT_ORDER=coordinate", tmpbam=path_tmpbam, bam=path_bam, path_markdup_report=path_markdup_report)
       cmd_run(cmd_markduplicates)
 
+      # Create final BAM alignment file
       cmd_movefinal = stringr::str_glue("mv '{tmpbam}' '{bam}'", tmpbam=path_tmpbam, bam=path_bam)
       cmd_run(cmd_movefinal)
     } else {
