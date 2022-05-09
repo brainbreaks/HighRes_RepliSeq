@@ -3,6 +3,21 @@ suppressMessages(library(reshape2))
 suppressMessages(library(readr))
 suppressMessages(library(smoother))
 
+calc_bamsizes = function(i)
+{
+  source("utils.R")
+  suppressMessages(library(dplyr))
+
+  path_bamsize = file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(binned_arguments_df$SAMPLE_BAM[i])))
+  if(!file.exists(path_bamsize)) {
+    cmd_bamsize = stringr::str_glue("samtools view -c {bam} > {size}", bam=binned_arguments_df$SAMPLE_BAM[i], size=path_bamsize)
+    cmd_run(cmd_bamsize)
+
+    df_bamsize = data.frame(SAMPLE_BAM=binned_arguments_df$SAMPLE_BAM[i], SAMPLE_SIZE=as.numeric(readLines(path_bamsize)))
+    readr::write_tsv(df_bamsize, path=path_bamsize)
+  }
+}
+
 cmd_is_available = function(programs) {
   missing_programs = c()
   for(prg in programs) {

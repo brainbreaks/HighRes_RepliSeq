@@ -8,7 +8,6 @@ suppressMessages(library(spatstat))
 suppressMessages(require(parallel))
 source("utils.R")
 
-
 pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
 {
   path_metadata = "~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_metadata.tsv"
@@ -25,17 +24,26 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
   #
   # Check external executables
   #
-  cmd_is_available(c("bedtools", "samtools", "bowtie2"))
+  cmd_is_available(c("bedtools", "samtools", "trim_galore", "picard"))
 
   path_bam = file.path(path_output, "alignments")
   if(!dir.exists(path_bam)) stop(paste0("Path '", path_bam, "' doesn't exist"))
 
+  allowed_phases = c("G1", "S", "G2")
   arguments_df = suppressMessages(readr::read_tsv(path_metadata)) %>%
-    dplyr::distinct(SAMPLE_NAME, SAMPLE_CONDITION, repliseq_fraction=SAMPLE_FRACTION) %>%
-    dplyr::mutate(SAMPLE_NUMBER=match(SAMPLE_NAME, unique(SAMPLE_NAME))) %>%
-    dplyr::mutate(SAMPLE_BAM=file.path(path_bam, paste0(SAMPLE_NAME, ".bam"))) %>%
-    dplyr::rowwise() %>%
-    dplyr::mutate(SAMPLE_BAM_EXIST=file.exists(SAMPLE_BAM))
+    dplyr::distinct(SAMPLE_NAME, SAMPLE_CONDITION, SAMPLE_PHASE, SAMPLE_FRACTION) %>%
+    dplyr::mutate(SAMPLE_BAM=file.path(path_bam, paste0(SAMPLE_NAME, ".bam")), SAMPLE_BAM_EXIST=file.exists(SAMPLE_BAM)) %>%
+    dplyr::mutate(SAMPLE_PHASE_I=match(SAMPLE_PHASE, allowed_phases)) %>%
+    dplyr::group_by(SAMPLE_CONDITION) %>%
+    dplyr::arrange(SAMPLE_CONDITION, SAMPLE_PHASE_I, SAMPLE_FRACTION) %>%
+    dplyr::mutate(repliseq_fraction=1:dplyr::n()) %>%
+    data.frame()
+
+  if(!all(arguments_df$SAMPLE_PHASE %in% allowed_phases)) {
+    incorrect_phase = arguments_df %>% dplyr::filter(!SAMPLE_BAM_EXIST)
+    error_missing = paste0("Missing BAM files in '", path_bam, "':\n    ", paste(missing_bam$SAMPLE_BAM, collapse="\n    "))
+    error_message = paste0(error_message, error_missing, "\n-------------------------------\n")
+  }
 
   error_message = ""
   if(!all(arguments_df$SAMPLE_BAM_EXIST)) {
@@ -53,41 +61,26 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
   if(!dir.exists(file.path(path_output, "bedgraph"))) cmd_run(paste0("mkdir ", file.path(path_output, "bedgraph")))
 
 
-  writeLines("Calculating BAM sizes for normalization...")
-  calc_bamsizes = function(i)
-  {
-    suppressMessages(library(dplyr))
-    source("utils.R")
-    path_bamsize = file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(binned_arguments_df$SAMPLE_BAM[i])))
-    if(!file.exists(path_bamsize)) {
-      cmd_bamsize = stringr::str_glue("samtools view -c {bam} > {size}", bam=binned_arguments_df$SAMPLE_BAM[i], size=path_bamsize)
-      cmd_run(cmd_bamsize)
-
-      df_bamsize = data.frame(SAMPLE_BAM=binned_arguments_df$SAMPLE_BAM[i], SAMPLE_SIZE=as.numeric(readLines(path_bamsize)))
-      readr::write_tsv(df_bamsize, path=path_bamsize)
-    }
-  }
-
-  path_bamsizes = file.path(path_bam, "bamsizes.tsv")
-  if(!file.exists(path_bamsizes))
-  {
-    if(threads > 0) {
-      x = sapply(1:nrow(binned_arguments_df), FUN=calc_bamsizes)
-    } else {
-
-    }
-    bamsize_cols = readr::cols(SAMPLE_BAM=readr::col_character(), SAMPLE_SIZE=readr::col_double())
-    bamsizes_df = binned_arguments_df %>%
-      dplyr::distinct(SAMPLE_NAME, SAMPLE_BAM) %>%
-      dplyr::rowwise() %>%
-      dplyr::do(readr::read_tsv(file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(.$SAMPLE_NAME[i]))), col_types=bamsize_cols)) %>%
-      dplyr::ungroup()
-    readr::write_tsv(bamsizes_df, path=path_bamsizes)
-    file.remove(file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(bamsize_df$SAMPLE_BAM))))
-  } else {
-    bamsizes_df = readr::read_tsv(path_bamsizes)
-  }
-
+  # writeLines("Calculating BAM sizes for normalization...")
+  # path_bamsizes = file.path(path_bam, "bamsizes.tsv")
+  # if(!file.exists(path_bamsizes))
+  # {
+  #   if(threads > 0) {
+  #     x = sapply(1:nrow(binned_arguments_df), FUN=calc_bamsizes)
+  #   } else {
+  #
+  #   }
+  #   bamsize_cols = readr::cols(SAMPLE_BAM=readr::col_character(), SAMPLE_SIZE=readr::col_double())
+  #   bamsizes_df = binned_arguments_df %>%
+  #     dplyr::distinct(SAMPLE_NAME, SAMPLE_BAM) %>%
+  #     dplyr::rowwise() %>%
+  #     dplyr::do(readr::read_tsv(file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(.$SAMPLE_NAME[i]))), col_types=bamsize_cols)) %>%
+  #     dplyr::ungroup()
+  #   readr::write_tsv(bamsizes_df, path=path_bamsizes)
+  #   file.remove(file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(bamsize_df$SAMPLE_BAM))))
+  # } else {
+  #   bamsizes_df = readr::read_tsv(path_bamsizes)
+  # }
 
   writeLines("Calculating coverage...")
   binned_arguments_df = arguments_df %>% tidyr::crossing(data.frame(SAMPLE_BINSIZE=binsizes)) %>% data.frame()
@@ -152,7 +145,7 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
     dplyr::mutate(repliseq_value=library_factor*repliseq_value_abs, repliseq_value=repliseq_value/max(repliseq_value)) %>%
     dplyr::mutate(repliseq_value=tidyr::replace_na(repliseq_value, 0)) %>%
     dplyr::ungroup() %>%
-    dplyr::arrange(dplyr::desc(repliseq_fraction)) %>%
+    dplyr::arrange(dplyr::desc(SAMPLE_PHASE, repliseq_fraction)) %>%
     dplyr::filter(grepl("^chr([0-9XY]+)$", repliseq_chrom))
 
   writeLines("Smoothening repliseq matrix...")

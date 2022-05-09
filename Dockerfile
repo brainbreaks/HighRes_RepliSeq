@@ -15,6 +15,7 @@ RUN http_proxy="${http_proxy}" https_proxy="${https_proxy}" apt-get install \
     make gcc gfortran g++ perl libcurl4-openssl-dev \
     ca-certificates ghostscript \
     zip unzip wget mime-support \
+    picard-tools trim-galore \
     libopenblas-base libopenblas-dev liblapack-dev liblapack-dev \
     libncurses6 libncursesw6 libncurses-dev \
     zlib1g-dev bzip2 libbz2-dev liblzma-dev bowtie2 -y && \
