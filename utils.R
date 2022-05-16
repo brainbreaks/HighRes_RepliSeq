@@ -64,37 +64,19 @@ repliseq_read = function(path) {
 }
 
 repliseq_summarize = function(repliseq_df, window=5) {
-  th.repliseq_value_norm = 0.1
-  repliseq_df = repliseq_df %>%
-    dplyr::group_by(repliseq_chrom, repliseq_start, repliseq_end) %>%
-    dplyr::mutate(repliseq_value_norm=((repliseq_value)/max(repliseq_value))) %>%
-    dplyr::ungroup() %>%
-    dplyr::group_by(repliseq_chrom, repliseq_start, repliseq_end) %>%
-    do((function(z) {
-      zz<<-z
-
-      i.max = z$repliseq_fraction[which.max(z$repliseq_value_norm)]
-      lb = which(z$repliseq_value_norm < th.repliseq_value_norm & z$repliseq_fraction < i.max)
-      lb = z$repliseq_fraction[ifelse(length(lb), lb[length(lb)]+1, 1)]
-      ub = which(z$repliseq_value_norm < th.repliseq_value_norm & z$repliseq_fraction > i.max)
-      ub = z$repliseq_fraction[ifelse(length(ub), ub[1]-1, nrow(z))]
-      # dplyr::between(z$repliseq_fraction, lb, ub)
-
-      z$repliseq_value_in_scope = T
-      z
-    })(.)) %>%
-    dplyr::ungroup()
-
   repliseq_time_df = repliseq_df %>%
     dplyr::mutate(repliseqTime_chrom=repliseq_chrom, repliseqTime_start=repliseq_start, repliseqTime_end=repliseq_end) %>%
     dplyr::group_by(repliseqTime_chrom, repliseqTime_start, repliseqTime_end) %>%
-    dplyr::mutate(repliseqTime_avg=weighted.mean(repliseq_fraction[repliseq_value_in_scope], repliseq_value_norm[repliseq_value_in_scope], na.rm=T)) %>%
-    dplyr::mutate(lb=dplyr::between(repliseq_fraction, floor(repliseqTime_avg[1]-4), ceiling(repliseqTime_avg[1]-2)), repliseqTime_min=ifelse(any(lb), weighted.mean(repliseq_fraction[lb], repliseq_value_norm[lb]), NA_real_)) %>%
-    dplyr::mutate(ub=dplyr::between(repliseq_fraction, floor(repliseqTime_avg[1]+2), ceiling(repliseqTime_avg[1]+4)), repliseqTime_max=ifelse(any(ub), weighted.mean(repliseq_fraction[ub], repliseq_value_norm[ub]), NA_real_)) %>%
-    dplyr::summarize(repliseqTime_avg=repliseqTime_avg[1], repliseqTime_min=repliseqTime_min[1], repliseqTime_max=repliseqTime_max[1], repliseqTime_lb=min(which(repliseq_value_in_scope)), repliseqTime_ub=max(which(repliseq_value_in_scope))) %>%
+    dplyr::mutate(
+      repliseq_value_norm=repliseq_value,
+      repliseq_value_norm=repliseq_value_norm-min(repliseq_value_norm, na.rm=T),
+      repliseq_value_norm=repliseq_value_norm/max(repliseq_value_norm, na.rm=T),
+      repliseq_value_norm=repliseq_value_norm^2,
+    ) %>%
+    dplyr::summarize(repliseqTime_avg=ifelse(any(!is.na(repliseq_value) & repliseq_value>0), weighted.mean(repliseq_fraction, repliseq_value_norm, na.rm=T), mean(repliseq_fraction))) %>%
     dplyr::group_by(repliseqTime_chrom) %>%
-    dplyr::mutate(repliseqTime_avg=smoother::smth.gaussian(repliseqTime_avg, window=window), repliseqTime_min=smoother::smth.gaussian(repliseqTime_min, window=window), repliseqTime_max=smoother::smth.gaussian(repliseqTime_max, window=window)) %>%
-    dplyr::mutate(repliseqTime_avg=zoo::na.fill(repliseqTime_avg, "extend"), repliseqTime_min=zoo::na.fill(repliseqTime_min, "extend"), repliseqTime_max=zoo::na.fill(repliseqTime_max, "extend")) %>%
+    dplyr::mutate(repliseqTime_avg=smoother::smth.gaussian(repliseqTime_avg, window=window)) %>%
+    dplyr::mutate(repliseqTime_avg=zoo::na.fill(repliseqTime_avg, "extend")) %>%
     dplyr::ungroup()
 
   repliseq_time_df

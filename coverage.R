@@ -8,23 +8,97 @@ suppressMessages(library(spatstat))
 suppressMessages(require(parallel))
 source("utils.R")
 
+make_bedgraph = function(i) {
+  suppressMessages(library(dplyr))
+  source("utils.R")
+
+  r = paste0(i, "/", nrow(binned_arguments_df))
+  writeLines(paste0("\n==========================================\n", r, ": ", binned_arguments_df$SAMPLE_NAME[i], " / bin", binned_arguments_df$SAMPLE_BINSIZE[i], "\n=========================================="))
+
+  path_tiles = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("bedgraph/genome_{format(binsize, scientific=F)}tiles.bed", binsize=binned_arguments_df$SAMPLE_BINSIZE[i])), expandTilde=T)
+  path_tiles_tmp = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("bedgraph/genome_{format(binsize, scientific=F)}tiles_tmp.bed", binsize=binned_arguments_df$SAMPLE_BINSIZE[i])), expandTilde=T)
+  path_bedgraph = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("bedgraph/{sample}_bin{format(binsize, scientific=F)}.bdg", sample=binned_arguments_df$SAMPLE_NAME[i], binsize=binned_arguments_df$SAMPLE_BINSIZE[i])), expandTilde=T)
+  path_chromsizes = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("bedgraph/{sample}_{format(binsize, scientific=F)}.sizes", sample=binned_arguments_df$SAMPLE_NAME[i], binsize=binned_arguments_df$SAMPLE_BINSIZE[i])), expandTilde=T)
+
+  if(!file.exists(path_bedgraph)) {
+    cmd_chromizes = stringr::str_glue("samtools idxstats '{bam}' | cut -f 1-2 | grep -vP '\\t0' > '{chromsizes}'", bam=binned_arguments_df$SAMPLE_BAM[i], chromsizes=path_chromsizes)
+    cmd_run(cmd_chromizes)
+    cmd_makewindows = stringr::str_glue("bedtools makewindows -w {format(binsize, scientific=F)} -s {format(binsize, scientific=F)} -g '{chromsizes}' > '{tiles}'; bedtools sort -faidx '{chromsizes}' -i '{tiles}' > {tiles_tmp}; mv '{tiles_tmp}' '{tiles}'", chromsizes=path_chromsizes, binsize=binned_arguments_df$SAMPLE_BINSIZE[i], tiles=path_tiles, tiles_tmp=path_tiles_tmp)
+    cmd_run(cmd_makewindows)
+    cmd_coverage = stringr::str_glue("bedtools intersect -abam '{tiles}' -b '{bam}' -c -bed -g '{chromsizes}' -sorted > '{bedgraph}'", sample=binned_arguments_df$SAMPLE_NAME[i], chromsizes=path_chromsizes, bam=binned_arguments_df$SAMPLE_BAM[i], tiles=path_tiles, bedgraph=path_bedgraph)
+    cmd_run(cmd_coverage)
+    file.remove(path_tiles)
+    file.remove(path_chromsizes)
+  } else {
+    writeLines(paste0("Bedgraph file '", path_bedgraph, "' exists, skipping..."))
+  }
+}
+
+write_results = function(i, bedgraph_df) {
+  suppressMessages(library(dplyr))
+  source("utils.R")
+
+  z = bedgraph_df %>%
+    dplyr::inner_join(bedgraph_output_df[i,,drop=F], by=c("SAMPLE_CONDITION", "SAMPLE_BINSIZE")) %>%
+    dplyr::arrange(repliseq_chrom, repliseq_start, repliseq_end, dplyr::desc(repliseq_fraction))
+  writeLines(paste0("\n==========================================\n", i, "/", nrow(bedgraph_output_df), ": ", z$SAMPLE_CONDITION[1], " / bin", z$SAMPLE_BINSIZE[1], "\n=========================================="))
+
+  z_path_igv = file.path(path_output, stringr::str_glue("results/{cond}_repliseq{format(binsize, scientific=F)}.igv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_mat = file.path(path_output, stringr::str_glue("results/{cond}_repliseq{format(binsize, scientific=F)}.mat", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_repliseqTime = file.path(path_output, stringr::str_glue("results/{cond}_repliseqTime{format(binsize, scientific=F)}.tsv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_bedgraph_repliseqTime = file.path(path_output, stringr::str_glue("results/{cond}_repliseqTime{format(binsize, scientific=F)}.bedgraph", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_repliseq = file.path(path_output, stringr::str_glue("results/{cond}_repliseq{format(binsize, scientific=F)}.tsv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+
+  z_wide = z %>%
+    dplyr::mutate(repliseq_dtype="repliseq") %>%
+    dplyr::arrange(SAMPLE_CONDITION, repliseq_chrom, repliseq_start, dplyr::desc(repliseq_fraction)) %>%
+    dplyr::mutate(SAMPLE_FRACTION_COL=gsub("([A-Z]+)_(\\d+)", "\\1\\2", paste0(SAMPLE_PHASE, "_", SAMPLE_FRACTION))) %>%
+    dplyr::mutate(SAMPLE_FRACTION_COL=factor(SAMPLE_FRACTION_COL, unique(SAMPLE_FRACTION_COL))) %>%
+    dplyr::mutate(repliseq_value=round(repliseq_value, 3)) %>%
+    reshape2::dcast(repliseq_chrom+repliseq_start+repliseq_end+repliseq_dtype~SAMPLE_FRACTION_COL, fill=0, value.var="repliseq_value")
+
+  repliseq_df = z %>% dplyr::select(dplyr::matches("^repliseq_"))
+  repliseqTime_df = repliseq_summarize(repliseq_df)
+
+  writeLines(paste0("Writing RepliSeq TSV file '", z_path_repliseq, "'..."))
+  readr::write_tsv(repliseq_df, file=z_path_repliseq)
+
+  writeLines(paste0("Writing RepliSeq matrix file '", z_path_mat, "'..."))
+  write.table(t(z_wide %>% dplyr::select(-repliseq_dtype)), file=z_path_mat, row.names=F, col.names=F, quote=F, sep="\t", na="")
+
+  writeLines(paste0("Writing RepliSeq IGV file '", z_path_igv, "'..."))
+  readr::write_lines("#type=GENE_EXPRESSION", file=z_path_igv)
+  readr::write_tsv(z_wide, file=z_path_igv, append=T, col_names=T)
+
+  writeLines(paste0("Writing RepliSeq time TSV file '", z_path_repliseqTime, "'..."))
+  readr::write_tsv(repliseqTime_df, file=z_path_repliseqTime)
+
+  repliseqTime_df %>%
+    dplyr::select(repliseqTime_chrom, repliseqTime_start, repliseqTime_end, repliseqTime_avg) %>%
+    readr::write_tsv(z_path_bedgraph_repliseqTime, col_names=F)
+}
+
 pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
 {
-  path_metadata = "~/Workspace/Datasets/zhao_bmc_repliseq_2020/zhao_metadata.tsv"
-  path_output = "~/Workspace/Datasets/zhao_bmc_repliseq_2020"
+  path_metadata = "~/Workspace/Datasets/B400_RS_002/B400_RS_002_repliseq.tsv"
+  path_output = "~/Workspace/Datasets/B400_RS_002"
   binsizes = 50e3
   threads = 1
 
+  path_metadata = "~/Workspace/Datasets/B400_RS_001/B400_RS_001_repliseq.tsv"
+  path_output = "~/Workspace/Datasets/B400_RS_001"
+  binsizes = 50e3
+  threads = 1
 
-  # path_metadata = "~/Workspace/Datasets/Repliseq/raw/B400_RS_001_23911/23911_meta.tsv"
-  # path_output = "~/Workspace/Datasets/Repliseq"
-  # binsizes = 50e3
-  # threads = 1
+  path_metadata = "~/Workspace/Datasets/B400_RS_ALL/B400_RS_ALL_repliseq.tsv"
+  path_output = "~/Workspace/Datasets/B400_RS_ALL"
+  binsizes = 50e3
+  threads = 1
 
   #
   # Check external executables
   #
-  cmd_is_available(c("bedtools", "samtools", "trim_galore", "picard"))
+  cmd_is_available(c("bedtools", "samtools"))
 
   path_bam = file.path(path_output, "alignments")
   if(!dir.exists(path_bam)) stop(paste0("Path '", path_bam, "' doesn't exist"))
@@ -32,20 +106,20 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
   allowed_phases = c("G1", "S", "G2")
   arguments_df = suppressMessages(readr::read_tsv(path_metadata)) %>%
     dplyr::distinct(SAMPLE_NAME, SAMPLE_CONDITION, SAMPLE_PHASE, SAMPLE_FRACTION) %>%
-    dplyr::mutate(SAMPLE_BAM=file.path(path_bam, paste0(SAMPLE_NAME, ".bam")), SAMPLE_BAM_EXIST=file.exists(SAMPLE_BAM)) %>%
+    dplyr::mutate(SAMPLE_BAM=R.utils::getAbsolutePath(file.path(path_bam, paste0(SAMPLE_NAME, ".bam")), expandTilde=T), SAMPLE_BAM_EXIST=file.exists(SAMPLE_BAM)) %>%
     dplyr::mutate(SAMPLE_PHASE_I=match(SAMPLE_PHASE, allowed_phases)) %>%
     dplyr::group_by(SAMPLE_CONDITION) %>%
     dplyr::arrange(SAMPLE_CONDITION, SAMPLE_PHASE_I, SAMPLE_FRACTION) %>%
     dplyr::mutate(repliseq_fraction=1:dplyr::n()) %>%
     data.frame()
 
+  error_message = ""
   if(!all(arguments_df$SAMPLE_PHASE %in% allowed_phases)) {
-    incorrect_phase = arguments_df %>% dplyr::filter(!SAMPLE_BAM_EXIST)
-    error_missing = paste0("Missing BAM files in '", path_bam, "':\n    ", paste(missing_bam$SAMPLE_BAM, collapse="\n    "))
+    incorrect_phase_df = arguments_df %>% dplyr::filter(!(SAMPLE_PHASE %in% allowed_phases))
+    error_missing = paste0("Incorrect phases in metadata file:\n    ", paste0(incorrect_phase_df$SAMPLE_NAME, " (", incorrect_phase_df$SAMPLE_PHASE, ")", collapse="\n    "))
     error_message = paste0(error_message, error_missing, "\n-------------------------------\n")
   }
 
-  error_message = ""
   if(!all(arguments_df$SAMPLE_BAM_EXIST)) {
     missing_bam = arguments_df %>% dplyr::filter(!SAMPLE_BAM_EXIST)
     error_missing = paste0("Missing BAM files in '", path_bam, "':\n    ", paste(missing_bam$SAMPLE_BAM, collapse="\n    "))
@@ -61,56 +135,8 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
   if(!dir.exists(file.path(path_output, "bedgraph"))) cmd_run(paste0("mkdir ", file.path(path_output, "bedgraph")))
 
 
-  # writeLines("Calculating BAM sizes for normalization...")
-  # path_bamsizes = file.path(path_bam, "bamsizes.tsv")
-  # if(!file.exists(path_bamsizes))
-  # {
-  #   if(threads > 0) {
-  #     x = sapply(1:nrow(binned_arguments_df), FUN=calc_bamsizes)
-  #   } else {
-  #
-  #   }
-  #   bamsize_cols = readr::cols(SAMPLE_BAM=readr::col_character(), SAMPLE_SIZE=readr::col_double())
-  #   bamsizes_df = binned_arguments_df %>%
-  #     dplyr::distinct(SAMPLE_NAME, SAMPLE_BAM) %>%
-  #     dplyr::rowwise() %>%
-  #     dplyr::do(readr::read_tsv(file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(.$SAMPLE_NAME[i]))), col_types=bamsize_cols)) %>%
-  #     dplyr::ungroup()
-  #   readr::write_tsv(bamsizes_df, path=path_bamsizes)
-  #   file.remove(file.path(path_bam, stringr::str_glue("{bam}_size.txt", bam=basename(bamsize_df$SAMPLE_BAM))))
-  # } else {
-  #   bamsizes_df = readr::read_tsv(path_bamsizes)
-  # }
-
   writeLines("Calculating coverage...")
   binned_arguments_df = arguments_df %>% tidyr::crossing(data.frame(SAMPLE_BINSIZE=binsizes)) %>% data.frame()
-  make_bedgraph = function(i) {
-    suppressMessages(library(dplyr))
-    source("utils.R")
-
-    r = paste0(i, "/", nrow(binned_arguments_df))
-    writeLines(paste0("\n==========================================\n", r, ": ", binned_arguments_df$SAMPLE_NAME[i], " / bin", binned_arguments_df$SAMPLE_BINSIZE[i], "\n=========================================="))
-
-    path_tiles = file.path(path_output, stringr::str_glue("bedgraph/genome_{format(binsize, scientific=F)}tiles.bed", binsize=binned_arguments_df$SAMPLE_BINSIZE[i]))
-    path_tiles_tmp = file.path(path_output, stringr::str_glue("bedgraph/genome_{format(binsize, scientific=F)}tiles_tmp.bed", binsize=binned_arguments_df$SAMPLE_BINSIZE[i]))
-    path_bedgraph = file.path(path_output, stringr::str_glue("bedgraph/{sample}_bin{format(binsize, scientific=F)}.bdg", sample=binned_arguments_df$SAMPLE_NAME[i], binsize=binned_arguments_df$SAMPLE_BINSIZE[i]))
-    path_chromsizes = file.path(path_output, stringr::str_glue("bedgraph/{sample}_{format(binsize, scientific=F)}.sizes", sample=binned_arguments_df$SAMPLE_NAME[i], binsize=binned_arguments_df$SAMPLE_BINSIZE[i]))
-
-    if(!file.exists(path_bedgraph)) {
-      cmd_chromizes = stringr::str_glue("samtools idxstats {bam} | cut -f 1-2 | grep -vP '\\t0' > {chromsizes}", bam=binned_arguments_df$SAMPLE_BAM[i], chromsizes=path_chromsizes)
-      cmd_run(cmd_chromizes)
-      cmd_makewindows = stringr::str_glue("bedtools makewindows -w {format(binsize, scientific=F)} -s {format(binsize, scientific=F)} -g {chromsizes} > {tiles}; bedtools sort -faidx {chromsizes} -i {tiles} > {tiles_tmp}; mv {tiles_tmp} {tiles}", chromsizes=path_chromsizes, binsize=binned_arguments_df$SAMPLE_BINSIZE[i], tiles=path_tiles, tiles_tmp=path_tiles_tmp)
-      cmd_run(cmd_makewindows)
-      cmd_coverage = stringr::str_glue("bedtools intersect -abam {tiles} -b {bam} -c -bed -g {chromsizes} -sorted > {bedgraph}", sample=binned_arguments_df$SAMPLE_NAME[i], chromsizes=path_chromsizes, bam=binned_arguments_df$SAMPLE_BAM[i], tiles=path_tiles, bedgraph=path_bedgraph)
-      cmd_run(cmd_coverage)
-      file.remove(path_tiles)
-      file.remove(path_tiles_tmp)
-      file.remove(path_chromsizes)
-    } else {
-      writeLines(paste0("Bedgraph file '", path_bedgraph, "' exists, skipping..."))
-    }
-  }
-
 
   if(threads > 0) {
     x = sapply(1:nrow(binned_arguments_df), FUN=make_bedgraph)
@@ -129,121 +155,104 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
   )
 
   writeLines("Building Repliseq matrix...")
-  bedgraph_df = arguments_df %>%
+  bedgraph_raw_df = arguments_df %>%
+    # dplyr::filter(SAMPLE_PHASE=="S") %>%
     tidyr::crossing(data.frame(SAMPLE_BINSIZE=binsizes)) %>%
     dplyr::filter(!is.na(SAMPLE_NAME)) %>%
-    dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_NAME, SAMPLE_CONDITION, repliseq_fraction) %>%
+    dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_NAME, SAMPLE_CONDITION, SAMPLE_PHASE, SAMPLE_FRACTION, repliseq_fraction) %>%
     dplyr::do(readr::read_tsv(file.path(path_output, stringr::str_glue("bedgraph/{sample}_bin{format(binsize, scientific=F)}.bdg", sample=.$SAMPLE_NAME[1], binsize=.$SAMPLE_BINSIZE[1])), col_names=names(bedgraph_cols$cols), col_types=bedgraph_cols)) %>%
     dplyr::ungroup() %>%
-    # dplyr::inner_join(bamsizes_df, by="SAMPLE_NAME") %>%
-    dplyr::group_by(SAMPLE_NAME, SAMPLE_CONDITION) %>%
-    dplyr::mutate(SAMPLE_BASELINE=quantile(repliseq_value_abs, 1)) %>%
-    dplyr::group_by(SAMPLE_CONDITION) %>%
-    dplyr::mutate(library_factor=min(SAMPLE_BASELINE)/SAMPLE_BASELINE) %>%
-    dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_CONDITION, repliseq_chrom, repliseq_start, repliseq_end) %>%
-    dplyr::mutate(repliseq_start=repliseq_start) %>%
-    dplyr::mutate(repliseq_value=library_factor*repliseq_value_abs, repliseq_value=repliseq_value/max(repliseq_value)) %>%
-    dplyr::mutate(repliseq_value=tidyr::replace_na(repliseq_value, 0)) %>%
-    dplyr::ungroup() %>%
-    dplyr::arrange(dplyr::desc(SAMPLE_PHASE, repliseq_fraction)) %>%
     dplyr::filter(grepl("^chr([0-9XY]+)$", repliseq_chrom))
 
-  writeLines("Smoothening repliseq matrix...")
-  bedgraph_smooth_df = bedgraph_df %>%
+  # libfactors_df = bedgraph_raw_df %>%
+  #   dplyr::arrange(dplyr::desc(repliseq_value_abs)) %>%
+  #   dplyr::distinct(SAMPLE_NAME, SAMPLE_CONDITION, repliseq_chrom, repliseq_start, repliseq_end, .keep_all=T) %>%
+  #   dplyr::group_by(SAMPLE_NAME, SAMPLE_CONDITION, repliseq_chrom) %>%
+  #   dplyr::summarize(SAMPLE_BASELINE=median(repliseq_value_abs)) %>%
+  #   dplyr::group_by(SAMPLE_CONDITION, repliseq_chrom) %>%
+  #   dplyr::mutate(library_factor=ifelse(SAMPLE_BASELINE==0, 0, min(SAMPLE_BASELINE)/SAMPLE_BASELINE)) %>%
+  #   dplyr::ungroup()
+  #
+  # libfactors_df1 = bedgraph_raw_df %>%
+  #   dplyr::filter(grepl("chr\\d+", repliseq_chrom)) %>%
+  #   dplyr::group_by(SAMPLE_NAME, SAMPLE_CONDITION) %>%
+  #   dplyr::summarize(SAMPLE_BASELINE=sum(repliseq_value_abs)) %>%
+  #   dplyr::group_by(SAMPLE_CONDITION) %>%
+  #   dplyr::mutate(library_factor=min(SAMPLE_BASELINE)/SAMPLE_BASELINE)  %>%
+  #   data.frame()
+
+  libfactors_df = bedgraph_raw_df %>%
+    dplyr::filter(grepl("chr\\d+", repliseq_chrom)) %>%
+    dplyr::arrange(repliseq_start) %>%
+    dplyr::group_by(SAMPLE_CONDITION, SAMPLE_BINSIZE, SAMPLE_NAME, repliseq_chrom) %>%
+    dplyr::summarize(SAMPLE_BASELINE=na.omit(unique(zoo::rollapply(repliseq_value_abs, FUN=max, width=1e8/50000, by=1e6/50000, na.rm=T)))) %>%
+    dplyr::group_by(SAMPLE_CONDITION, SAMPLE_BINSIZE, SAMPLE_NAME) %>%
+    dplyr::filter(quantile(SAMPLE_BASELINE, 0.3, na.rm=T)<=SAMPLE_BASELINE & SAMPLE_BASELINE <= quantile(SAMPLE_BASELINE, 0.7, na.rm=T)) %>%
+    dplyr::summarize(SAMPLE_BASELINE=mean(SAMPLE_BASELINE, na.rm=T))  %>%
+    dplyr::group_by(SAMPLE_CONDITION, SAMPLE_BINSIZE)%>%
+    dplyr::mutate(library_factor=min(SAMPLE_BASELINE)/SAMPLE_BASELINE)  %>%
+    data.frame()
+
+  # ggplot(libfactors_df %>% dplyr::inner_join(libfactors_df1, by=c("SAMPLE_NAME")), aes(library_factor.y, library_factor.x)) +
+  #   geom_point() +
+  #   geom_abline(xintercept=0, slope=1) +
+  #   labs(x="Simpla adjustment", y="Max value adjustment") +
+  #   ggrepel::geom_text_repel(aes(label=SAMPLE_NAME))
+  #
+  #
+  # ggplot2::ggplot(libfactors_df) +
+  #   ggridges::geom_density_ridges(ggplot2::aes(x=repliseq_value_abs, y=SAMPLE_NAME))
+
+  # bedgraph_raw_df %>% dplyr::filter(SAMPLE_NAME=="DMSO S1" & repliseq_chrom=="chr6")
+
+  # libfactors_cor = libfactors_df %>%
+  #   reshape2::dcast(repliseq_chrom~SAMPLE_NAME, value.var="SAMPLE_BASELINE") %>%
+  #   dplyr::select(-repliseq_chrom) %>%
+  #   cor()
+  # corrplot::corrplot.mixed(corr=libfactors_cor, lower = 'shade', upper = 'ellipse', order = 'hclust')
+  #
+  # ggplot(bedgraph_df %>% dplyr::filter(repliseq_value_abs<500)) +
+  #   ggridges::geom_density_ridges(aes(x=repliseq_value_abs, y=SAMPLE_NAME)) +
+  #   facet_wrap(~SAMPLE_CONDITION, scales="free")
+
+   # softmax <- function(z){
+   #   expsum = sum(exp(z))
+   #   exp(z) / expsum
+   # }
+
+
+  bedgraph_df = bedgraph_raw_df %>%
+    dplyr::inner_join(libfactors_df, by=intersect(colnames(libfactors_df), colnames(bedgraph_raw_df))) %>%
+    dplyr::mutate(repliseq_value=library_factor*repliseq_value_abs) %>%
+    # dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_CONDITION, repliseq_chrom, repliseq_start, repliseq_end) %>%
+    # dplyr::mutate(repliseq_value=repliseq_value/quantile(repliseq_value[SAMPLE_PHASE=="S" & repliseq_value>0], 0.1, na.rm=T))) %>%
+    # dplyr::mutate(repliseq_value=ifelse(is.infinite(repliseq_value) | is.na(repliseq_value) | repliseq_value<0, 0, repliseq_value)) %>%
+    dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_CONDITION, repliseq_chrom, repliseq_start, repliseq_end) %>%
+    dplyr::mutate(repliseq_value=repliseq_value/sum(repliseq_value)) %>%
     dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_CONDITION) %>%
-    dplyr::do((function(z){
-      zz<<-z
-      # adads()
-      # z = bedgraph_df %>% dplyr::filter(SAMPLE_CONDITION=="DMSO" & SAMPLE_BINSIZE==100000)
-      z_wide = z %>%
-        dplyr::arrange(repliseq_chrom, repliseq_start) %>%
-        reshape2::dcast(repliseq_chrom+repliseq_start+repliseq_end~repliseq_fraction, fill=0, value.var="repliseq_value")
-      z_mat = z_wide %>% dplyr::select(-(repliseq_chrom:repliseq_end)) %>% as.matrix()
-      z_fractions = colnames(z_mat)
-      z_mat = as.matrix(spatstat.core::blur(spatstat.geom::as.im(z_mat), sigma=1))
-      z_mat = t(apply(z_mat, 1, scales::rescale))
-      z_wide[,z_fractions] = z_mat
-      z_long = z_wide %>%
-        reshape2::melt(measure.vars=z_fractions, value.name="repliseq_value") %>%
-        dplyr::mutate(variable=as.numeric(as.character(variable)))
-      z %>%
-        dplyr::rename(repliseq_value_unsmoothed="repliseq_value") %>%
-        dplyr::inner_join(z_long, by=c("repliseq_fraction"="variable", "repliseq_chrom", "repliseq_start", "repliseq_end"))
-    })(.))
+    dplyr::mutate(repliseq_value=repliseq_value/quantile(repliseq_value, 0.99, na.rm=T), repliseq_value=tidyr::replace_na(repliseq_value, 0)) %>%
+    dplyr::ungroup()
+    # dplyr::arrange(SAMPLE_CONDITION, repliseq_chrom, repliseq_start, dplyr::desc(repliseq_fraction)) %>%
+    # dplyr::group_by(SAMPLE_CONDITION, repliseq_chrom, repliseq_fraction) %>%
+    # dplyr::mutate(repliseq_value=smoother::smth.gaussian(repliseq_value, window=3, tails=T)) %>%
+    # dplyr::ungroup() %>%
+    # dplyr::arrange(SAMPLE_CONDITION, repliseq_chrom, repliseq_start, dplyr::desc(repliseq_fraction)) %>%
+    # dplyr::group_by(SAMPLE_CONDITION, repliseq_chrom, repliseq_start) %>%
+    # dplyr::mutate(repliseq_value=smoother::smth.gaussian(repliseq_value, window=2, tails=T)) %>%
+    # dplyr::ungroup()
 
   #
   # Write IGV and MAT files
   #
+
   writeLines("Writing results in matrix and IGV formats...")
-  bedgraph_smooth_output_df = bedgraph_smooth_df %>% dplyr::distinct(SAMPLE_BINSIZE, SAMPLE_CONDITION)
-
-  write_results = function(i) {
-    suppressMessages(library(dplyr))
-    source("utils.R")
-
-    z = bedgraph_smooth_df %>%
-      dplyr::inner_join(bedgraph_smooth_output_df[i,,drop=F], by=c("SAMPLE_CONDITION", "SAMPLE_BINSIZE")) %>%
-      dplyr::arrange(repliseq_chrom, repliseq_start, repliseq_end, dplyr::desc(repliseq_fraction))
-    writeLines(paste0("\n==========================================\n", i, "/", nrow(bedgraph_smooth_output_df), ": ", z$SAMPLE_CONDITION[1], " / bin", z$SAMPLE_BINSIZE[1], "\n=========================================="))
-
-    # z = bedgraph_smooth_df %>% dplyr::filter(SAMPLE_CONDITION=="DMSO")
-    z_path_igv = file.path(path_output, stringr::str_glue("results/{cond}_repliseq{format(binsize, scientific=F)}.igv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-    z_unsmoothed_igv_path = file.path(path_output, stringr::str_glue("results/{cond}_smooth_repliseq{format(binsize, scientific=F)}.igv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-
-    z_path_mat = file.path(path_output, stringr::str_glue("results/{cond}_smooth_repliseq{format(binsize, scientific=F)}.mat", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-    z_unsmoothed_path_mat = file.path(path_output, stringr::str_glue("results/{cond}_smooth_repliseq{format(binsize, scientific=F)}.mat", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-
-    z_path_repliseqTime = file.path(path_output, stringr::str_glue("results/{cond}_repliseqTime{format(binsize, scientific=F)}.tsv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-    z_unsmoothed_path_repliseqTime = file.path(path_output, stringr::str_glue("results/{cond}_repliseqTime{format(binsize, scientific=F)}.tsv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-
-    z_path_repliseq = file.path(path_output, stringr::str_glue("results/{cond}_repliseq{format(binsize, scientific=F)}.tsv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-
-    z_wide = z %>%
-      dplyr::mutate(repliseq_dtype="repliseq") %>%
-      dplyr::arrange(repliseq_chrom, repliseq_start) %>%
-      reshape2::dcast(repliseq_chrom+repliseq_start+repliseq_end+repliseq_dtype~repliseq_fraction, fill=0, value.var="repliseq_value")
-
-    z_unsmoothed_wide = z %>%
-      dplyr::mutate(repliseq_dtype="repliseq") %>%
-      dplyr::arrange(repliseq_chrom, repliseq_start) %>%
-      reshape2::dcast(repliseq_chrom+repliseq_start+repliseq_end+repliseq_dtype~repliseq_fraction, fill=0, value.var="repliseq_value_unsmoothed")
-
-    repliseq_df = z %>% dplyr::select(dplyr::matches("^repliseq_"))
-    repliseqTime_df = repliseq_summarize(repliseq_df)
-
-    repliseq_unsmoothed_df = z %>% dplyr::select(dplyr::matches("^repliseq_")) %>% dplyr::mutate(repliseq_value=repliseq_value_unsmoothed)
-    repliseqTime_unsmoothed_df = repliseq_summarize(repliseq_unsmoothed_df)
-
-    writeLines(paste0("Writing RepliSeq TSV file '", z_path_repliseq, "'..."))
-    readr::write_tsv(repliseq_df, file=z_path_repliseq)
-
-    writeLines(paste0("Writing RepliSeq matrix file '", z_path_mat, "'..."))
-    readr::write_tsv(as.data.frame(t(z_wide %>% dplyr::select(-repliseq_dtype))), file=z_path_mat, append=F, col_names=F)
-
-    writeLines(paste0("Writing unsmoothed RepliSeq matrix file '", z_unsmoothed_path_mat, "'..."))
-    readr::write_tsv(as.data.frame(t(z_unsmoothed_wide %>% dplyr::select(-repliseq_dtype))), file=z_unsmoothed_path_mat, append=F, col_names=F)
-
-    writeLines(paste0("Writing RepliSeq IGV file '", z_unsmoothed_igv_path, "'..."))
-    readr::write_lines("#type=GENE_EXPRESSION", file=z_unsmoothed_igv_path)
-    readr::write_tsv(z_unsmoothed_wide, file=z_unsmoothed_igv_path, append=T, col_names=T)
-
-    writeLines(paste0("Writing smoothed RepliSeq IGV file '", z_path_igv, "'..."))
-    readr::write_lines("#type=GENE_EXPRESSION", file=z_path_igv)
-    readr::write_tsv(z_wide, file=z_path_igv, append=T, col_names=T)
-
-    writeLines(paste0("Writing RepliSeq time TSV file '", z_unsmoothed_path_repliseqTime, "'..."))
-    readr::write_tsv(repliseqTime_unsmoothed_df, file=z_unsmoothed_path_repliseqTime)
-
-    writeLines(paste0("Writing smoothed RepliSeq time TSV file '", z_path_repliseqTime, "'..."))
-    readr::write_tsv(repliseqTime_df, file=z_path_repliseqTime)
-  }
-
+  bedgraph_output_df = bedgraph_df %>% dplyr::distinct(SAMPLE_BINSIZE, SAMPLE_CONDITION)
   if(threads == 1) {
-    x = sapply(1:nrow(bedgraph_smooth_output_df), FUN=write_results)
+    x = sapply(1:nrow(bedgraph_output_df), FUN=write_results, bedgraph_df=bedgraph_df)
   } else {
     cl = parallel::makeCluster(threads, outfile="")
-    parallel::clusterExport(cl, c("bedgraph_smooth_output_df", "bedgraph_smooth_df"), envir=environment())
-    x = parallel::parSapply(cl , 1:nrow(bedgraph_smooth_output_df), FUN=write_results)
+    parallel::clusterExport(cl, c("bedgraph_output_df"), envir=environment())
+    x = parallel::parSapply(cl , 1:nrow(bedgraph_output_df), FUN=write_results, bedgraph_df=bedgraph_df)
     parallel::stopCluster(cl)
   }
 }
