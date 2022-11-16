@@ -57,11 +57,27 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
   #
   # Check duplicate fastq files
   #
+  pairs_no = max(as.numeric(unique(meta_df$FASTQ_PAIR)))
+  if(pairs_no==2) {
+    writeLines("Provided sequence data has paired reads")
+  } else {
+    if(pairs_no==1) {
+      writeLines("Provided sequence data has unpaired reads")
+    } else {
+      stop("FASTQ_PAIR can be either 1 or 2 (use 1 for unpaired reads)")
+    }
+  }
+
   arguments1_df = meta_df %>%
       dplyr::left_join(files_df, by="FASTQ_FILE") %>%
       dplyr::rowwise() %>%
-      dplyr::mutate(TRIM_FASTQ_PATH=R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("trim/{file}", sample=SAMPLE_NAME, file=gsub("\\.fq.gz|\\.fastq.gz", paste0("_val_", FASTQ_PAIR, ".fq.gz"), basename(FASTQ_PATH)))))) %>%
-      dplyr::ungroup()
+      dplyr::mutate(
+        TRIM_FASTQ_FILE=dplyr::case_when(
+          pairs_no==2 ~ gsub("\\.fq.gz|\\.fastq.gz", paste0("_val_", FASTQ_PAIR, ".fq.gz"), basename(FASTQ_PATH)),
+          T ~  gsub("\\.fq.gz|\\.fastq.gz", "_trimmed.fq.gz", basename(FASTQ_PATH))),
+        TRIM_FASTQ_PATH=R.utils::getAbsolutePath(file.path(path_output, "trim", TRIM_FASTQ_FILE))) %>%
+      dplyr::ungroup() %>%
+      dplyr::select(-TRIM_FASTQ_FILE)
   if(any(is.na(arguments1_df$FASTQ_PATH))) {
     missing_fasta = arguments1_df %>%
       dplyr::filter(is.na(FASTQ_PATH)) %>%
@@ -82,7 +98,8 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
   # Create data.frame with coupled paired reads in each row
   #
   arguments_trim_df = arguments1_df %>%
-    dplyr::mutate(TRIM_FASTQ_PAIR=paste0("trim_", FASTQ_PAIR)) %>% reshape2::dcast(SAMPLE_NAME~TRIM_FASTQ_PAIR, value.var="TRIM_FASTQ_PATH")
+    dplyr::mutate(TRIM_FASTQ_PAIR=paste0("trim_", FASTQ_PAIR)) %>%
+    reshape2::dcast(SAMPLE_NAME~TRIM_FASTQ_PAIR, value.var="TRIM_FASTQ_PATH")
   arguments_df = arguments1_df %>%
     reshape2::dcast(SAMPLE_NAME+SAMPLE_NUMBER+SAMPLE_CONDITION+SAMPLE_FRACTION~FASTQ_PAIR, value.var="FASTQ_PATH") %>%
     dplyr::inner_join(arguments_trim_df, by="SAMPLE_NAME") %>%
@@ -99,26 +116,40 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
     # Prepare file paths
     #
     writeLines(paste0(i, "/", nrow(arguments_df), ": ", arguments_df$SAMPLE_NAME[i]))
-    path_trim = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("trim", sample=arguments_df$SAMPLE_NAME[i])))
-    path_bam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}.bam", sample=arguments_df$SAMPLE_NAME[i])))
-    path_bai = R.utils::getAbsolutePath(paste0(path_bam, ".bai"))
-    path_tmpbam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_tmp.bam", sample=arguments_df$SAMPLE_NAME[i])))
-    path_tmpsam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_tmp.sam", sample=arguments_df$SAMPLE_NAME[i])))
-    path_markdup_report = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_markdup.txt", sample=arguments_df$SAMPLE_NAME[i])))
+    path_trim = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("trim", sample=arguments_df$SAMPLE_NAME[i])), expandTilde=T)
+    path_bam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}.bam", sample=arguments_df$SAMPLE_NAME[i])), expandTilde=T)
+    path_bai = R.utils::getAbsolutePath(paste0(path_bam, ".bai"), expandTilde=T)
+    path_tmpbam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_tmp.bam", sample=arguments_df$SAMPLE_NAME[i])), expandTilde=T)
+    path_sam = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_tmp.sam", sample=arguments_df$SAMPLE_NAME[i])), expandTilde=T)
+    path_markdup_report = R.utils::getAbsolutePath(file.path(path_output, stringr::str_glue("alignments/{sample}_markdup.txt", sample=arguments_df$SAMPLE_NAME[i])), expandTilde=T)
+
+    if(pairs_no==2) {
+      if(!file.exists(arguments_df$`trim_1`[i]) | !file.exists(arguments_df$`trim_2`[i])) {
+        cmd_trim = stringr::str_glue("trim_galore --paired --length={trim_minlength} --gzip -q {trim_quality} -o '{path_trim}' -j {threads} '{input1}' '{input2}'", path_trim=path_trim, trim_minlength=trim_minlength, input1=arguments_df$`1`[i], input2=arguments_df$`2`[i], trim_quality=trim_quality, threads=threads)
+        cmd_run(cmd_trim)
+      }
+    } else {
+      if(!file.exists(arguments_df$`trim_1`[i])) {
+        cmd_trim = stringr::str_glue("trim_galore --length={trim_minlength} --gzip -q {trim_quality} -o '{path_trim}' -j {threads} '{input1}'", path_trim=path_trim, trim_minlength=trim_minlength, input1=arguments_df$`1`[i], trim_quality=trim_quality, threads=threads)
+        cmd_run(cmd_trim)
+      }
+    }
+
+    if(!file.exists(path_sam)) {
+      # Bowtie2
+      if(pairs_no==2) {
+        cmd_bowtie = stringr::str_glue("bowtie2 -q -p {threads} --phred33 --end-to-end --sensitive --no-mixed --no-discordant --no-unal -x '{db}' -1  '{r1}' -2  '{r2}' -S '{sam}'", bam=path_bam, sam=path_sam, db=path_database, r1=arguments_df$`trim_1`[i], r2=arguments_df$`trim_2`[i], sample=arguments_df$SAMPLE_NAME[i], threads=threads)
+      } else {
+        cmd_bowtie = stringr::str_glue("bowtie2 -q -p {threads} --phred33 --end-to-end --sensitive --no-mixed --no-discordant --no-unal -x '{db}' -U  '{r1}' -S '{sam}'", bam=path_bam, sam=path_sam, db=path_database, r1=arguments_df$`trim_1`[i], r2=arguments_df$`trim_2`[i], sample=arguments_df$SAMPLE_NAME[i], threads=threads)
+      }
+      cmd_run(cmd_bowtie)
+    }
 
     if(!file.exists(path_bam)) {
-      # Trim
-      cmd_trim = stringr::str_glue("trim_galore --paired --length={trim_minlength} --gzip -q {trim_quality} -o '{path_trim}' -j {threads} '{input1}' '{input2}'", path_trim=path_trim, trim_minlength=trim_minlength, input1=arguments_df$`1`[i], input2=arguments_df$`2`[i], trim_quality=trim_quality, threads=threads)
-      cmd_run(cmd_trim)
-
-      # Bowtie2
-      cmd_bowtie = stringr::str_glue("bowtie2 -q -p {threads} --phred33 --end-to-end --sensitive --no-mixed --no-discordant --no-unal -x '{db}' -1  '{r1}' -2  '{r2}' -S '{sam}'", bam=path_bam, sam=path_tmpsam, db=path_database, r1=arguments_df$`trim_1`[i], r2=arguments_df$`trim_2`[i], sample=arguments_df$SAMPLE_NAME[i], threads=threads)
-      cmd_run(cmd_bowtie)
-
       # Convert to BAM
-      cmd_mapq = stringr::str_glue("samtools view -bSq {alignment_mapq} -@ {threads} -o '{bam}' '{sam}'", alignment_mapq=alignment_mapq, sam=path_tmpsam, bam=path_bam, threads=threads)
+      cmd_mapq = stringr::str_glue("samtools view -bSq {alignment_mapq} -@ {threads} -o '{bam}' '{sam}'", alignment_mapq=alignment_mapq, sam=path_sam, bam=path_bam, threads=threads)
       cmd_run(cmd_mapq)
-      file.remove(path_tmpsam)
+      file.remove(path_sam)
 
       # Sort
       cmd_sort = stringr::str_glue("samtools sort -@ {threads} -o '{tmp}' '{bam}'", bam=path_bam, tmp=path_tmpbam, threads=threads)
@@ -188,7 +219,7 @@ pipeline_align_cli = function()
   #
   # Create missing folders
   #
-  pipeline_align(path_metadata=path_metadata, SAMPLE_NUMBER = SAMPLE_NUMBER, trim_quality=trim_quality, alignment_mapq=alignment_mapq, trim_minlength=trim_minlength, path_fastq=path_fastq, path_database=path_database, path_output=path_output, threads=threads)
+  pipeline_align(path_metadata=path_metadata, SAMPLE_NUMBER=SAMPLE_NUMBER, trim_quality=trim_quality, alignment_mapq=alignment_mapq, trim_minlength=trim_minlength, path_fastq=path_fastq, path_database=path_database, path_output=path_output, threads=threads)
 }
 pipeline_align_cli()
 

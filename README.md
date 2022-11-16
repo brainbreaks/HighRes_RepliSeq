@@ -1,4 +1,4 @@
- GRO-seq pipeline package (Wei, Pei-Chi group; DKFZ)
+ Repli-Seq pipeline package (Wei, Pei-Chi group; DKFZ)
 ====================================================
 Global Run-On Sequencing (GRO-Seq) pipeline for analyzing transcription activity of genes from engaged RNA polymerase. 
 
@@ -6,7 +6,7 @@ Global Run-On Sequencing (GRO-Seq) pipeline for analyzing transcription activity
 Table of Contents
 =================
 
-  * Using GRO-seq docker image
+  * Using Repli-seq docker image
     * [Singularity](#singularity) 
       * [Pull Repli-seq image from DockerHUB](#singularity-pull)
       * [Run container](#singularity-run)
