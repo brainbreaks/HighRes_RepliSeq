@@ -27,7 +27,7 @@ Table of Contents
 <a name="singularity-pull">Pull Repli-seq image from data server</a>
 ----------------------------------------------------
 ```console
-singularity pull docker://sandrejev/repliseq:latest
+singularity pull docker://peggyweidkfz/repliseq:latest
 ```
 
 <a name="singularity-run">Run container</a>
@@ -57,7 +57,7 @@ singularity shell repliseq.sif
 <a name="docker-pull">Pull Repli-seq image from DockerHUB</a>
 ----------------------------------------------------
 ```console
-docker pull sandrejev:repliseq
+docker pull peggyweidkfz:repliseq
 ```
 
 <a name="docker-run">Run container</a>
@@ -87,18 +87,18 @@ docker run -v ${PWD}:/mount -u $(id -g ${USER}):$(id -g ${USER}) -it --entrypoin
 ----------------------------------------------------
 To build Docker image you need to execute
 ```console
-docker build --squash --build-arg http_proxy="http://www-int2.inet.dkfz-heidelberg.de:80" --build-arg https_proxy="http://www-int2.inet.dkfz-heidelberg.de:80" --progress=plain --rm -t sandrejev/repliseq:latest .
+docker build --squash --build-arg http_proxy="http://www-int2.inet.dkfz-heidelberg.de:80" --build-arg https_proxy="http://www-int2.inet.dkfz-heidelberg.de:80" --progress=plain --rm -t peggyweidkfz/repliseq:latest .
 ```
 
 <a name="build-push">Push docker image to Docker HUB</a>
 ----------------------------------------------------
 ```console
 docker login
-docker push sandrejev/repliseq:latest
+docker push peggyweidkfz/repliseq:latest
 ```
 
 <a name="build-convert">Convert cached docker image to singularity (for local testing)</a>
 ----------------------------------------------------
 ```console
-singularity pull docker-daemon:sandrejev/repliseq:latest
+singularity pull docker-daemon:peggyweidkfz/repliseq:latest
 ```
