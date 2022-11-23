@@ -43,11 +43,19 @@ write_results = function(i, bedgraph_df, outputs_df, path_output) {
     dplyr::arrange(repliseq_chrom, repliseq_start, repliseq_end, dplyr::desc(repliseq_fraction))
   writeLines(paste0("\n==========================================\n", i, "/", nrow(outputs_df), ": ", z$SAMPLE_CONDITION[1], " / bin", z$SAMPLE_BINSIZE[1], "\n=========================================="))
 
-  z_path_igv = file.path(path_output, stringr::str_glue("results/{cond}_repliseq{format(binsize, scientific=F)}.igv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-  z_path_mat = file.path(path_output, stringr::str_glue("results/{cond}_repliseq{format(binsize, scientific=F)}.mat", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-  z_path_repliseqTime = file.path(path_output, stringr::str_glue("results/{cond}_repliseqTime{format(binsize, scientific=F)}.tsv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-  z_path_bedgraph_repliseqTime = file.path(path_output, stringr::str_glue("results/{cond}_repliseqTime{format(binsize, scientific=F)}.bedgraph", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
-  z_path_repliseq = file.path(path_output, stringr::str_glue("results/{cond}_repliseq{format(binsize, scientific=F)}.tsv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_igv = file.path(path_output, stringr::str_glue("results/{cond}_repliseq_{format(binsize, scientific=F)}.igv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_mat = file.path(path_output, stringr::str_glue("results/{cond}_repliseq_{format(binsize, scientific=F)}.mat", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_repliseqTime = file.path(path_output, stringr::str_glue("results/{cond}_repliseqTime_{format(binsize, scientific=F)}.tsv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_bedgraph_log2 = file.path(path_output, stringr::str_glue("results/{cond}_log2_{format(binsize, scientific=F)}.bedgraph", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_bedgraph_log2_smoothed = file.path(path_output, stringr::str_glue("results/{cond}_log2smooth_{format(binsize, scientific=F)}.bedgraph", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_bedgraph_repliseqTime = file.path(path_output, stringr::str_glue("results/{cond}_repliseqTime_{format(binsize, scientific=F)}.bedgraph", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+  z_path_repliseq = file.path(path_output, stringr::str_glue("results/{cond}_repliseq_{format(binsize, scientific=F)}.tsv", cond=z$SAMPLE_CONDITION[1], binsize=z$SAMPLE_BINSIZE[1]))
+
+  # z %>%
+  #   dplyr::mutate(SAMPLE_FRACTION_COL=gsub("([A-Z]+)_(\\d+)", "\\1\\2", paste0(SAMPLE_PHASE, "_", SAMPLE_FRACTION))) %>%
+  #   dplyr::mutate(SAMPLE_FRACTION_COL=factor(SAMPLE_FRACTION_COL, unique(SAMPLE_FRACTION_COL)))  %>%
+  #   dplyr::group_by(repliseq_chrom, repliseq_start, repliseq_end, SAMPLE_NAME, SAMPLE_FRACTION_COL) %>%
+  #   dplyr::summarise(n=dplyr::n())
 
   z_wide = z %>%
     dplyr::mutate(repliseq_dtype="repliseq") %>%
@@ -73,12 +81,31 @@ write_results = function(i, bedgraph_df, outputs_df, path_output) {
   writeLines(paste0("Writing RepliSeq time TSV file '", z_path_repliseqTime, "'..."))
   readr::write_tsv(repliseqTime_df, file=z_path_repliseqTime)
 
+  writeLines(paste0("Writing RepliSeq average fraction bedgraph '", z_path_bedgraph_repliseqTime, "'..."))
   repliseqTime_df %>%
     dplyr::select(repliseqTime_chrom, repliseqTime_start, repliseqTime_end, repliseqTime_avg) %>%
     readr::write_tsv(z_path_bedgraph_repliseqTime, col_names=F)
+
+  writeLines(paste0("Writing RepliSeq Replication Timiming log2 bedgraph '", z_path_bedgraph_log2, "'..."))
+  repliseqTime_df %>%
+    dplyr::mutate(repliseqTime_log2=dplyr::case_when(
+      repliseqTime_log2==-as.numeric("inf")~min(repliseqTime_log2[is.finite(repliseqTime_log2)], na.rm=T),
+      repliseqTime_log2==as.numeric("inf")~max(repliseqTime_log2[is.finite(repliseqTime_log2)], na.rm=T),
+      T~repliseqTime_log2), repliseqTime_log2=tidyr::replace_na(repliseqTime_log2, 0)) %>%
+    dplyr::select(repliseqTime_chrom, repliseqTime_start, repliseqTime_end, repliseqTime_log2) %>%
+    readr::write_tsv(z_path_bedgraph_log2, col_names=F)
+
+  writeLines(paste0("Writing RepliSeq Replication Timiming log2 bedgraph (smoothed) '", z_path_bedgraph_log2, "'..."))
+  repliseqTime_df %>%
+    dplyr::mutate(repliseqTime_log2_smoothed=dplyr::case_when(
+      repliseqTime_log2_smoothed==-as.numeric("inf")~min(repliseqTime_log2_smoothed[is.finite(repliseqTime_log2_smoothed)], na.rm=T),
+      repliseqTime_log2_smoothed==as.numeric("inf")~max(repliseqTime_log2_smoothed[is.finite(repliseqTime_log2_smoothed)], na.rm=T),
+      T~repliseqTime_log2_smoothed), repliseqTime_log2_smoothed=tidyr::replace_na(repliseqTime_log2_smoothed, 0)) %>%
+    dplyr::select(repliseqTime_chrom, repliseqTime_start, repliseqTime_end, repliseqTime_log2_smoothed) %>%
+    readr::write_tsv(z_path_bedgraph_log2_smoothed, col_names=F)
 }
 
-pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
+pipeline_coverage = function(path_metadata, path_output, aggregate, binsizes, threads=1)
 {
   #
   # Check external executables
@@ -89,14 +116,16 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
   if(!dir.exists(path_bam)) stop(paste0("Path '", path_bam, "' doesn't exist"))
 
   allowed_phases = c("G1", "S", "G2")
-  arguments_df = suppressMessages(readr::read_tsv(path_metadata)) %>%
+  arguments_raw_df = suppressMessages(readr::read_tsv(path_metadata)) %>%
     dplyr::distinct(SAMPLE_NAME, SAMPLE_CONDITION, SAMPLE_PHASE, SAMPLE_FRACTION) %>%
     dplyr::mutate(SAMPLE_BAM=R.utils::getAbsolutePath(file.path(path_bam, paste0(SAMPLE_NAME, ".bam")), expandTilde=T), SAMPLE_BAM_EXIST=file.exists(SAMPLE_BAM)) %>%
     dplyr::mutate(SAMPLE_PHASE_I=match(SAMPLE_PHASE, allowed_phases)) %>%
-    dplyr::group_by(SAMPLE_CONDITION) %>%
-    dplyr::arrange(SAMPLE_CONDITION, SAMPLE_PHASE_I, SAMPLE_FRACTION) %>%
-    dplyr::mutate(repliseq_fraction=1:dplyr::n()) %>%
-    data.frame()
+    dplyr::arrange(SAMPLE_CONDITION, SAMPLE_PHASE_I, SAMPLE_FRACTION)
+  fractions = unique(paste0(arguments_raw_df$SAMPLE_PHASE, arguments_raw_df$SAMPLE_FRACTION))
+  arguments_df = arguments_raw_df %>%
+    dplyr::group_by(SAMPLE_CONDITION)%>%
+    dplyr::mutate(repliseq_fraction=match(paste0(SAMPLE_PHASE, SAMPLE_FRACTION), fractions)) %>%
+    dplyr::ungroup()
 
   error_message = ""
   if(!all(arguments_df$SAMPLE_PHASE %in% allowed_phases)) {
@@ -149,24 +178,34 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
     dplyr::ungroup() %>%
     dplyr::filter(grepl("^chr([0-9XY]+)$", repliseq_chrom))
 
+  if(aggregate != "none") {
+    bedgraph_raw_df = bedgraph_raw_df %>%
+      dplyr::mutate(SAMPLE_NAME=paste0(SAMPLE_CONDITION, "_", SAMPLE_PHASE, SAMPLE_FRACTION)) %>%
+      dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_NAME, SAMPLE_CONDITION, SAMPLE_PHASE, SAMPLE_FRACTION, repliseq_fraction, repliseq_chrom, repliseq_start, repliseq_end) %>%
+      dplyr::summarise(repliseq_value_abs=get(aggregate)(repliseq_value_abs, na.rm=T)) %>%
+      dplyr::ungroup()
+  }
+
   libfactors_df = bedgraph_raw_df %>%
     dplyr::filter(grepl("chr\\d+", repliseq_chrom)) %>%
-    dplyr::arrange(repliseq_start) %>%
+    dplyr::arrange(SAMPLE_CONDITION, SAMPLE_BINSIZE, SAMPLE_NAME, repliseq_chrom, repliseq_start) %>%
     dplyr::group_by(SAMPLE_CONDITION, SAMPLE_BINSIZE, SAMPLE_NAME, repliseq_chrom) %>%
-    dplyr::summarize(SAMPLE_BASELINE=na.omit(unique(zoo::rollapply(repliseq_value_abs, FUN=max, width=1e8/50000, by=1e6/50000, na.rm=T)))) %>%
+    dplyr::summarize(SAMPLE_LIBSIZE=sum(repliseq_value_abs, na.rm=T), SAMPLE_BASELINE=na.omit(unique(zoo::rollapply(repliseq_value_abs, FUN=max, width=1e8/50000, by=1e6/50000, na.rm=T)))) %>%
+    dplyr::arrange(SAMPLE_CONDITION, SAMPLE_BINSIZE, SAMPLE_NAME) %>%
     dplyr::group_by(SAMPLE_CONDITION, SAMPLE_BINSIZE, SAMPLE_NAME) %>%
-    dplyr::filter(quantile(SAMPLE_BASELINE, 0.3, na.rm=T)<=SAMPLE_BASELINE & SAMPLE_BASELINE <= quantile(SAMPLE_BASELINE, 0.7, na.rm=T)) %>%
-    dplyr::summarize(SAMPLE_BASELINE=mean(SAMPLE_BASELINE, na.rm=T))  %>%
+    dplyr::summarize(
+      SAMPLE_LIBSIZE=mean(SAMPLE_LIBSIZE[quantile(SAMPLE_LIBSIZE, 0.3, na.rm=T)<=SAMPLE_LIBSIZE & SAMPLE_LIBSIZE <= quantile(SAMPLE_LIBSIZE, 0.7, na.rm=T)], na.rm=T),
+      SAMPLE_BASELINE=mean(SAMPLE_BASELINE[quantile(SAMPLE_BASELINE, 0.3, na.rm=T)<=SAMPLE_BASELINE & SAMPLE_BASELINE <= quantile(SAMPLE_BASELINE, 0.7, na.rm=T)], na.rm=T)
+    ) %>%
     dplyr::group_by(SAMPLE_CONDITION, SAMPLE_BINSIZE)%>%
+    # dplyr::mutate(library_factor=min(SAMPLE_BASELINE)/SAMPLE_BASELINE)  %>%
     dplyr::mutate(library_factor=min(SAMPLE_BASELINE)/SAMPLE_BASELINE)  %>%
     data.frame()
+
 
   bedgraph_df = bedgraph_raw_df %>%
     dplyr::inner_join(libfactors_df, by=intersect(colnames(libfactors_df), colnames(bedgraph_raw_df))) %>%
     dplyr::mutate(repliseq_value=library_factor*repliseq_value_abs) %>%
-    # dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_CONDITION, repliseq_chrom, repliseq_start, repliseq_end) %>%
-    # dplyr::mutate(repliseq_value=repliseq_value/quantile(repliseq_value[SAMPLE_PHASE=="S" & repliseq_value>0], 0.1, na.rm=T))) %>%
-    # dplyr::mutate(repliseq_value=ifelse(is.infinite(repliseq_value) | is.na(repliseq_value) | repliseq_value<0, 0, repliseq_value)) %>%
     dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_CONDITION, repliseq_chrom, repliseq_start, repliseq_end) %>%
     dplyr::mutate(repliseq_value=repliseq_value/sum(repliseq_value)) %>%
     dplyr::group_by(SAMPLE_BINSIZE, SAMPLE_CONDITION) %>%
@@ -187,7 +226,7 @@ pipeline_coverage = function(path_metadata, path_output, binsizes, threads=1)
 
   writeLines("Writing results in matrix and IGV formats...")
   bedgraph_output_df = bedgraph_df %>% dplyr::distinct(SAMPLE_BINSIZE, SAMPLE_CONDITION)
-  if(threads == 1) {
+  if(threads > 0) {
     x = sapply(1:nrow(bedgraph_output_df), FUN=write_results, bedgraph_df=bedgraph_df, outputs_df=bedgraph_output_df, path_output=path_output)
   } else {
     cl = parallel::makeCluster(threads, outfile="")
@@ -203,10 +242,15 @@ pipeline_coverage_cli = function() {
     optparse::make_option(c("-m", "--metadata"), dest="metadata", type="character", default=NULL, help="File with metadata", metavar="character"),
     optparse::make_option(c("-o", "--output-dir"), dest="out", type="character", default=".", help="Output directory [default= %default]", metavar="character"),
     optparse::make_option("--binsizes", type="character", default="50000", help="Comma separated bin size [default= %default]", metavar="character"),
-    optparse::make_option(c("-t", "--threads"), type="integer", default=1, help="Output directory [default= %default]", metavar="integer")
+    optparse::make_option(c("-t", "--threads"), type="integer", default=1, help="Output directory [default= %default]", metavar="integer"),
+    optparse::make_option(c("-a", "--aggregate"), type="character", default="none", help="Aggregate replicates (sum, mean, median, none) [default= %default]", metavar="character")
   )
   opt_parser = optparse::OptionParser(option_list=option_list, usage="./coverage.R [options]", description = "Use the aligned replieq to build final replication program matrix")
   opt = optparse::parse_args(opt_parser)
+
+  if(!(opt$aggregate %in% c("sum", "mean", "median", "none"))) {
+    stop("Invalid aggregate argument value")
+  }
 
   #
   # Parse CLI arguments
@@ -214,6 +258,7 @@ pipeline_coverage_cli = function() {
   path_metadata = opt$metadata
   path_output = opt$out
   threads = opt$threads
+  aggregate = opt$aggregate
   binsizes = sapply(unlist(strsplit(opt$binsizes, ", *")), as.numeric)
 
   #
@@ -222,6 +267,7 @@ pipeline_coverage_cli = function() {
   writeLines(paste0("metadata=", path_metadata))
   writeLines(paste0("out=", path_output))
   writeLines(paste0("threads=", threads))
+  writeLines(paste0("aggregate=", aggregate))
   writeLines(paste0("binsizes=", paste(binsizes, collapse=",")))
 
   #
@@ -229,7 +275,9 @@ pipeline_coverage_cli = function() {
   #
   if(!dir.exists(path_output)) cmd_run(paste0("mkdir ", path_output))
 
-  pipeline_coverage(path_metadata=path_metadata, path_output=path_output, binsizes=binsizes, threads=threads)
+  pipeline_coverage(path_metadata=path_metadata, path_output=path_output, binsizes=binsizes, threads=threads, aggregate=aggregate)
 }
 
-pipeline_coverage_cli()
+if (!interactive()) {
+  pipeline_coverage_cli()
+}

@@ -64,20 +64,35 @@ repliseq_read = function(path) {
 }
 
 repliseq_summarize = function(repliseq_df, window=5) {
+  max_fraction = max(repliseq_df$repliseq_fraction, na.rm=T)
+  min_fraction = min(repliseq_df$repliseq_fraction, na.rm=T)
   repliseq_time_df = repliseq_df %>%
     dplyr::mutate(repliseqTime_chrom=repliseq_chrom, repliseqTime_start=repliseq_start, repliseqTime_end=repliseq_end) %>%
     dplyr::group_by(repliseqTime_chrom, repliseqTime_start, repliseqTime_end) %>%
-    dplyr::mutate(
-      repliseq_value_norm=repliseq_value,
-      repliseq_value_norm=repliseq_value_norm-min(repliseq_value_norm, na.rm=T),
-      repliseq_value_norm=repliseq_value_norm/max(repliseq_value_norm, na.rm=T),
-      repliseq_value_norm=repliseq_value_norm^2,
+    dplyr::summarize(
+      repliseqTime_avg=ifelse(any(!is.na(repliseq_value) & repliseq_value>0), weighted.mean(repliseq_fraction, repliseq_value, na.rm=T), mean(repliseq_fraction)),
+      tmp_EL=ifelse(any(!is.na(repliseq_value) & repliseq_value>0), weighted.mean(repliseq_fraction, repliseq_value, na.rm=T), mean(repliseq_fraction)),
+      tmp_EL_norm=(tmp_EL-min_fraction)/(max_fraction-min_fraction),
+      tmp_EL_frac=tmp_EL_norm/(1-tmp_EL_norm),
+      repliseqTime_log2=log2(tmp_EL_frac),
     ) %>%
-    dplyr::summarize(repliseqTime_avg=ifelse(any(!is.na(repliseq_value) & repliseq_value>0), weighted.mean(repliseq_fraction, repliseq_value_norm, na.rm=T), mean(repliseq_fraction))) %>%
     dplyr::group_by(repliseqTime_chrom) %>%
+    dplyr::mutate(repliseqTime_log2_smoothed=dplyr::case_when(
+      repliseqTime_log2==-as.numeric("inf")~NA_real_,
+      repliseqTime_log2==as.numeric("inf")~NA_real_,
+      T~repliseqTime_log2)) %>%
+    dplyr::ungroup()%>%
+    dplyr::group_by(repliseqTime_chrom) %>%
+    dplyr::do((function(z) {
+      span = window/nrow(z)
+      m = loess(repliseqTime_log2_smoothed~repliseqTime_start, data=z, span=span)
+      z$repliseqTime_log2_smoothed = predict(m, z)
+      z
+    })(.)) %>%
     dplyr::mutate(repliseqTime_avg=smoother::smth.gaussian(repliseqTime_avg, window=window)) %>%
     dplyr::mutate(repliseqTime_avg=zoo::na.fill(repliseqTime_avg, "extend")) %>%
-    dplyr::ungroup()
+    dplyr::ungroup() %>%
+    dplyr::select(dplyr::starts_with("repliseqTime_"))
 
   repliseq_time_df
 }
