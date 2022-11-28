@@ -32,7 +32,7 @@ pipeline_align = function(path_metadata, path_fastq, alignment_mapq=40, trim_qua
   #
   duplicate_sample = meta_df %>%
     dplyr::group_by(SAMPLE_NAME) %>%
-    dplyr::filter(length(unique(SAMPLE_CONDITION, SAMPLE_FRACTION))>1) %>%
+    dplyr::filter(length(unique(paste(SAMPLE_CONDITION, SAMPLE_FRACTION)))>1) %>%
     dplyr::ungroup() %>%
     .$SAMPLE_NAME
   if(length(duplicate_sample)>0) {
@@ -221,10 +221,8 @@ pipeline_align_cli = function()
   #
   pipeline_align(path_metadata=path_metadata, SAMPLE_NUMBER=SAMPLE_NUMBER, trim_quality=trim_quality, alignment_mapq=alignment_mapq, trim_minlength=trim_minlength, path_fastq=path_fastq, path_database=path_database, path_output=path_output, threads=threads)
 }
-pipeline_align_cli()
 
 
-
-
-
-
+if (!interactive()) {
+  pipeline_align_cli()
+}
