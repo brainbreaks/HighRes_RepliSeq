@@ -1,7 +1,7 @@
  Repli-Seq pipeline package (Wei, Pei-Chi group; DKFZ)
 ====================================================
 Global Run-On Sequencing (GRO-Seq) pipeline for analyzing transcription activity of genes from engaged RNA polymerase. 
-
+[![DOI](https://zenodo.org/badge/468097636.svg)](https://zenodo.org/doi/10.5281/zenodo.10838364)
 
 Table of Contents
 =================
